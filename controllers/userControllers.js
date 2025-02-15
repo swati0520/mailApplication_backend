@@ -100,7 +100,7 @@ function sendEmail(email, resetToken) {
       from: "sinhaswitu154@gmail.com",
       to: email,
       subject: "Password reset Request",
-      text: `Please click the link below to choose a new password: \n "http://localhost:8081/users/resetToken/${resetToken}`,
+      text: `Please click the link below to choose a new password: \n "https://mailapplication-backend-3k7o.onrender.com/${resetToken}`,
     });
     console.log("Message sent: %s", info.messageId);
   }
