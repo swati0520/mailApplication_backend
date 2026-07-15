@@ -1,13 +1,23 @@
-const express = require('express')
-const { sendMail,  deleteSentMail, getSentMail, getRecivedMail } = require('../controllers/mailController')
-const checkToken = require('../middleware/CheckToken')
-const router = express.Router()
+import express from "express";
 
+import {
+  sendMail,
+  deleteSentMail,
+  deleteRecivedMail,
+  getSentMail,
+  getRecivedMail,
+} from "../controllers/mailController.js";
 
-router.post('/create',checkToken,sendMail)
-router.delete('/delete/:_id',checkToken,deleteSentMail)
-router.get('/sentmails',checkToken,getSentMail)
-router.get('/getMail',checkToken,getRecivedMail)
+import checkToken from "../middleware/CheckToken.js";
 
+const router = express.Router();
 
-module.exports = router
+router.post("/create", checkToken, sendMail);
+
+router.delete("/delete/sent/:_id", checkToken, deleteSentMail);
+router.delete("/delete/received/:_id", checkToken, deleteRecivedMail);
+
+router.get("/sentmails", checkToken, getSentMail);
+router.get("/getMail", checkToken, getRecivedMail);
+
+export default router;

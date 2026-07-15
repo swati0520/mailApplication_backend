@@ -1,91 +1,338 @@
-const MailCollection = require("../models/Mail");
-const UserCollection = require("../models/User");
+import MailCollection from "../models/Mail.js";
+import UserCollection from "../models/User.js";
 
-exports.sendMail = async (req, res) => {
-  const { to, body, file, subject } = req.body;
-
+export const sendMail = async (req, res) => {
   try {
-    const { email } = req.user;
-    let user = await UserCollection.findOne({ email });
-    let friend = await UserCollection.findOne({ email:to });
-    let data = await MailCollection.create({
-      from:email,
-      to,
-      body,
+    const { to, body, file, subject } = req.body;
+    const senderEmail = req.user?.email;
+
+    if (!senderEmail) {
+      return res.status(401).json({
+        message: "Unauthorized user",
+      });
+    }
+
+    if (!to?.trim()) {
+      return res.status(400).json({
+        message: "Receiver email is required",
+      });
+    }
+
+    if (!subject?.trim()) {
+      return res.status(400).json({
+        message: "Subject is required",
+      });
+    }
+
+    if (!body?.trim()) {
+      return res.status(400).json({
+        message: "Mail body is required",
+      });
+    }
+
+    const normalizedSenderEmail = senderEmail.trim().toLowerCase();
+    const normalizedReceiverEmail = to.trim().toLowerCase();
+
+    const user = await UserCollection.findOne({
+      email: normalizedSenderEmail,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        message: "Sender user not found",
+      });
+    }
+
+    const friend = await UserCollection.findOne({
+      email: normalizedReceiverEmail,
+    });
+
+    if (!friend) {
+      return res.status(404).json({
+        message: "Receiver user not found",
+      });
+    }
+
+    const data = await MailCollection.create({
+      from: normalizedSenderEmail,
+      to: normalizedReceiverEmail,
+      body: body.trim(),
       file,
-      subject,
+      subject: subject.trim(),
     });
 
     user.sendMail.push(data._id);
     friend.recivedMail.push(data._id);
 
-    await user.save();
-    await friend.save();
+    await Promise.all([
+      user.save(),
+      friend.save(),
+    ]);
 
-    res.status(201).json({ message: "email sent successfully" });
+    return res.status(201).json({
+      message: "Email sent successfully",
+      mail: data,
+    });
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "error in sending mail", error: error.message });
+
+    return res.status(500).json({
+      message: "Error in sending mail",
+      error: error.message,
+    });
   }
 };
-exports.getSentMail = async(req,res)=>{
-const {_id,email} = req.user;
-
-
-try {
-  // let sentMails = await MailCollection.find({from:email})
-  let user = await UserCollection.findOne({email}).populate('sendMail')
-res.status(200).json({sentMails:user.sendMail})
-} catch (error) {
-  res.status(500).json({error:error.message,message:"error in getting"})
-
-}
-
-}
-exports.getRecivedMail = async(req,res)=>{
-  const {_id,email} = req.user;
+export const getSentMail = async (req, res) => {
 
   try {
-    // let sentMails = await MailCollection.find({from:email})
-    let user = await UserCollection.findOne({email}).populate('recivedMail')
-  res.status(200).json({sentMails:user.recivedMail})
+
+    const email = req.user?.email;
+
+
+
+    if (!email) {
+
+      return res.status(401).json({
+
+        message: "Unauthorized user",
+
+      });
+
+    }
+
+
+
+    const user = await UserCollection.findOne({
+
+      email: email.trim().toLowerCase(),
+
+    }).populate("sendMail");
+
+
+
+    if (!user) {
+
+      return res.status(404).json({
+
+        message: "User not found",
+
+      });
+
+    }
+
+
+
+    return res.status(200).json({
+
+      sentMails: user.sendMail,
+
+    });
+
   } catch (error) {
-    res.status(500).json({error:error.message,message:"error in getting"})
-  
+
+    return res.status(500).json({
+
+      message: "Error in getting sent mails",
+
+      error: error.message,
+
+    });
+
   }
 
-}
-
-exports.deleteSentMail = async (req, res) => {
-  let _id = req.params._id;
-  let { email } = req.user;
-
-  try {
-    let user = await UserCollection.findOne({ email });
-    user.sendMail.pull(_id);
-    await user.save();
-    res.status(200).json({ message: "mail deleting successfully" });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "error in deleting mail", error: error.message });
-  }
 };
 
-exports.deleteRecivedMail = async (req, res) => {
-  let _id = req.params._id;
-  let { email } = req.user;
+export const getRecivedMail = async (req, res) => {
 
   try {
-    let user = await UserCollection.findOne({ email });
-    user.recivedMail.pull(_id);
+
+    const email = req.user?.email;
+
+
+
+    if (!email) {
+
+      return res.status(401).json({
+
+        message: "Unauthorized user",
+
+      });
+
+    }
+
+
+
+    const user = await UserCollection.findOne({
+
+      email: email.trim().toLowerCase(),
+
+    }).populate("recivedMail");
+
+
+
+    if (!user) {
+
+      return res.status(404).json({
+
+        message: "User not found",
+
+      });
+
+    }
+
+
+
+    return res.status(200).json({
+
+      receivedMails: user.recivedMail,
+
+    });
+
+  } catch (error) {
+
+    return res.status(500).json({
+
+      message: "Error in getting received mails",
+
+      error: error.message,
+
+    });
+
+  }
+
+};
+
+export const deleteSentMail = async (req, res) => {
+
+  try {
+
+    const mailId = req.params._id;
+
+    const email = req.user?.email;
+
+
+
+    if (!email) {
+
+      return res.status(401).json({
+
+        message: "Unauthorized user",
+
+      });
+
+    }
+
+
+
+    const user = await UserCollection.findOne({
+
+      email: email.trim().toLowerCase(),
+
+    });
+
+
+
+    if (!user) {
+
+      return res.status(404).json({
+
+        message: "User not found",
+
+      });
+
+    }
+
+
+
+    user.sendMail.pull(mailId);
 
     await user.save();
-    res.status(200).json({ message: "mail deleting successfully" });
+
+
+
+    return res.status(200).json({
+
+      message: "Mail deleted successfully",
+
+    });
+
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "error in deleting mail", error: error.message });
+
+    return res.status(500).json({
+
+      message: "Error in deleting mail",
+
+      error: error.message,
+
+    });
+
   }
+
+};
+
+export const deleteRecivedMail = async (req, res) => {
+
+  try {
+
+    const mailId = req.params._id;
+
+    const email = req.user?.email;
+
+
+
+    if (!email) {
+
+      return res.status(401).json({
+
+        message: "Unauthorized user",
+
+      });
+
+    }
+
+
+
+    const user = await UserCollection.findOne({
+
+      email: email.trim().toLowerCase(),
+
+    });
+
+
+
+    if (!user) {
+
+      return res.status(404).json({
+
+        message: "User not found",
+
+      });
+
+    }
+
+
+
+    user.recivedMail.pull(mailId);
+
+    await user.save();
+
+
+
+    return res.status(200).json({
+
+      message: "Mail deleted successfully",
+
+    });
+
+  } catch (error) {
+
+    return res.status(500).json({
+
+      message: "Error in deleting mail",
+
+      error: error.message,
+
+    });
+
+  }
+
 };

@@ -1,17 +1,13 @@
-let UserCollection = require('../models/User')
-let bcrypt = require('bcryptjs')
-const salt = bcrypt.genSaltSync(10)
-const jwt = require('jsonwebtoken');
-var randomstring = require("randomstring");
-const nodemailer = require("nodemailer");
-const { json } = require('express');
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import randomstring from "randomstring";
+import nodemailer from "nodemailer";
 
+import UserCollection from "../models/User.js";
 
+export const createUser = async (req, res) => {
 
-exports.createUser = async (req, res) => {
-  // res.send('register running')
   const { name, email, password } = req.body;
-
   if (!name || !email || !password) {
     return res.status(400).json({ message: 'all fields are required' });
   }
@@ -33,121 +29,202 @@ exports.createUser = async (req, res) => {
 }
 
 
-exports.loginUser = async (req, res) => {
+export const loginUser = async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    let user = await UserCollection.findOne({ email })
-    if (user) {
+    if (!email?.trim() || !password) {
+      return res.status(400).json({
+        message: "Email and password are required",
+      });
+    }
 
-      let comparesPassword = bcrypt.compareSync(password, user.password)
+    const normalizedEmail = email.trim().toLowerCase();
 
-      if (comparesPassword) {
-        let token = jwt.sign({ _id: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '1d' });
-        res.status(200).json({ message: "login successfully", token, expiresIn: '1d' })
+    const user = await UserCollection.findOne({
+      email: normalizedEmail,
+    }).select("+password");
 
-      } else {
-        res.status(401).json({ message: "wrong password" })
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const isPasswordCorrect = await bcrypt.compare(
+      password,
+      user.password
+    );
+
+    if (!isPasswordCorrect) {
+      return res.status(401).json({
+        message: "Wrong password",
+      });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      throw new Error("JWT_SECRET is not configured");
+    }
+
+    const token = jwt.sign(
+      {
+        _id: user._id,
+        email: user.email,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "1d",
       }
-    } else {
-      return res.status(404).json({ message: 'user not found' })
-    }
+    );
 
+    return res.status(200).json({
+      message: "Login successful",
+      token,
+      expiresIn: "1d",
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        profilePic: user.profilePic,
+      },
+    });
   } catch (error) {
-    res.status(500).json({ message: 'error in login user', error: error.message })
-  }
-
-
-}
-
-exports.forgetPassword = async (req, res) => {
-  const { email } = req.body
-  try {
-    let user = await UserCollection.findOne({ email })
-    if(user){
-      let resetToken=randomstring.generate(30)
-      user.resetPasswordToken=resetToken
-      await user.save()
-      const mail=await sendEmail(email,resetToken)
-      res.status(201).json({
-        msg:"please check your email for reset password",
-        success:true
-
-      })
-    }
-    else{
-      res.status(500).json({msg:"email does not exist",success:false})
-    }
-  } catch (error) {
-    res.status(500).json({
-      msg:"error in forgot password",success:false,error:error.message
-    })
+    return res.status(500).json({
+      message: "Error in login user",
+      error: error.message,
+    });
   }
 };
 
-function sendEmail(email, resetToken) {
+export const forgetPassword = async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    if (!email?.trim()) {
+      return res.status(400).json({
+        msg: "Email is required",
+        success: false,
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const user = await UserCollection.findOne({
+      email: normalizedEmail,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        msg: "Email does not exist",
+        success: false,
+      });
+    }
+
+    const resetToken = randomstring.generate(30);
+
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpires = Date.now() + 15 * 60 * 1000;
+
+    await user.save();
+
+    await sendEmail(normalizedEmail, resetToken);
+
+    return res.status(200).json({
+      msg: "Please check your email to reset your password",
+      success: true,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      msg: "Error in forgot password",
+      success: false,
+      error: error.message,
+    });
+  }
+};
+
+const sendEmail = async (email, resetToken) => {
   const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 587,
     secure: false,
     auth: {
-      user: "sinhaswitu154@gmail.com",
-      pass: "uwfs qhwk dxtt tvxt",
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_APP_PASSWORD,
     },
   });
-  async function main() {
-    const info = await transporter.sendMail({
-      from: "sinhaswitu154@gmail.com",
-      to: email,
-      subject: "Password reset Request",
-      text: `Please click the link below to choose a new password: \n "https://mailapplication-backend-3k7o.onrender.com/${resetToken}`,
-    });
-    console.log("Message sent: %s", info.messageId);
-  }
 
-  main().catch(console.error);
-}
- 
-exports.resetPsssword = async (req, res) => {
+  const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+
+  const info = await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: "Password Reset Request",
+    text: `Please click the link below to reset your password:\n${resetLink}`,
+  });
+
+  return info;
+};
+
+export const resetPsssword = async (req, res) => {
   let token = req.params.token
   let user = await UserCollection.findOne({ resetPasswordToken: token });
-  if(user){
+  if (user) {
     res.render('resetPassword', { token })
   }
-  else{
+  else {
     res.status(500).json("token expire")
   }
-  
+
 }
 
-exports.passwordReset = async (req, res) => {
-  let token = req.params.token;
-  let newPassword = req.body.newPassword;
+export const passwordReset = async (req, res) => {
+  const { token } = req.params;
+  const { newPassword } = req.body;
 
   try {
-    let user = await UserCollection.findOne({ resetPasswordToken: token });
-    
-    if (user) {
-      user.password = newPassword;
-      user.resetPasswordToken = null;
-      await user.save();
-      res.json({ msg: "password updated  successfully", success: true });
-    } else {
-      res.json({ msg: "token expired", success: false });
+    if (!newPassword || newPassword.length < 8) {
+      return res.status(400).json({
+        msg: "Password must be at least 8 characters",
+        success: false,
+      });
     }
+
+    const user = await UserCollection.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: {
+        $gt: Date.now(),
+      },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        msg: "Reset token is invalid or expired",
+        success: false,
+      });
+    }
+
+    user.password = newPassword;
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+
+    await user.save();
+
+    return res.status(200).json({
+      msg: "Password updated successfully",
+      success: true,
+    });
   } catch (error) {
-    res.json({
-      msg: "error in password reset",
+    return res.status(500).json({
+      msg: "Error in password reset",
       success: false,
       error: error.message,
     });
   }
-}
+};
 
-exports.updateUser = async (req, res) => {
-  const { name, password,profilePic } = req.body;
+export const updateUser = async (req, res) => {
+  const { name, password, profilePic } = req.body;
   const { _id, email } = req.user;
-  console.log("_id",_id)
   try {
     let user = await UserCollection.findById(_id)
     if (user) {
@@ -157,7 +234,7 @@ exports.updateUser = async (req, res) => {
       }
       if (password) {
         user.password = password
-      } if(profilePic) {
+      } if (profilePic) {
         user.profilePic = profilePic
       }
       await user.save()
@@ -172,7 +249,7 @@ exports.updateUser = async (req, res) => {
 
 }
 
-exports.deleteUser = async (req, res) => {
+export const deleteUser = async (req, res) => {
   const { _id } = req.user
   try {
     await UserCollection.findByIdAndDelete(_id)
@@ -183,7 +260,7 @@ exports.deleteUser = async (req, res) => {
 
 }
 
-exports.getUserDetails = async (req, res) => {
+export const getUserDetails = async (req, res) => {
   const { _id } = req.user;
   try {
     let user = await UserCollection.findById(_id)

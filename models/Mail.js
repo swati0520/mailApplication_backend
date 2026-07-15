@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 const mailSchema = new mongoose.Schema({
   from: {
     type: String,
@@ -20,5 +20,6 @@ const mailSchema = new mongoose.Schema({
   },
 },{timestamps:true});
 
+const Mail = mongoose.model("mails", mailSchema);
 
-module.exports = mongoose.model('mails',mailSchema)
+export default Mail
