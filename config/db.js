@@ -1,12 +1,27 @@
-import mongoose from "mongoose";
-async function connectToDb(){
+import mySql from "mysql2/promise"
+import dotenv from "dotenv";
 
-try {
-    let connection = await mongoose.connect(process.env.MONGO_URL)
+dotenv.config()
 
-} catch (error) {
+const db = mySql.createPool({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+});
 
-}
-}
-//('mongodb://127.0.0.1:27017/mailBox')
-export default connectToDb
+export const connectDB = async () => {
+  try {
+    const connection = await db.getConnection();
+    console.log("MySQL Connected Successfully");
+    connection.release();
+  } catch (error) {
+    console.error(error);
+    process.exit(1);
+  }
+};
+
+export default db;

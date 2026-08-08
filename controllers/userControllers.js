@@ -2,145 +2,149 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import randomstring from "randomstring";
 import nodemailer from "nodemailer";
+import expressAsyncHandler from "express-async-handler";
+import {
+  findUserByEmail,
+  createUser as createUserQuery,
+  updateResetToken,
+  findUserByResetToken,
+  findValidResetToken,
+  updatePassword,
+  findUserById,
+  updateUserQuery,
+  deleteUserQuery,
+  getAllUsers,
+  searchUsers,
+} from "../models/User.js";
 
-import UserCollection from "../models/User.js";
 
-export const createUser = async (req, res) => {
-
+export const createUser = expressAsyncHandler(async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) {
-    return res.status(400).json({ message: 'all fields are required' });
+
+  if (!name?.trim() || !email?.trim() || !password) {
+    return res.status(400).json({
+      message: "All fields are required",
+    });
   }
-  let checkUser = await UserCollection.findOne({ email })
+
+  const trimmedName = name.trim();
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const checkUser = await findUserByEmail(normalizedEmail);
+
   if (checkUser) {
-    return res.status(403).json({ message: 'user already register' })
-  }
-  try {
-    let data = await UserCollection.create({
-      name,
-      email,
-      password
-    })
-    res.status(201).json({ message: 'user created successfully' })
-  } catch (error) {
-    res.status(500).json({ message: 'error in register user', error: error.message })
+    return res.status(403).json({
+      message: "User already registered",
+    });
   }
 
-}
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  await createUserQuery(
+    trimmedName,
+    normalizedEmail,
+    hashedPassword
+  );
+
+  return res.status(201).json({
+    message: "User created successfully",
+  });
+});
 
 
-export const loginUser = async (req, res) => {
+export const loginUser = expressAsyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  try {
-    if (!email?.trim() || !password) {
-      return res.status(400).json({
-        message: "Email and password are required",
-      });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    const user = await UserCollection.findOne({
-      email: normalizedEmail,
-    }).select("+password");
-
-    if (!user) {
-      return res.status(404).json({
-        message: "User not found",
-      });
-    }
-
-    const isPasswordCorrect = await bcrypt.compare(
-      password,
-      user.password
-    );
-
-    if (!isPasswordCorrect) {
-      return res.status(401).json({
-        message: "Wrong password",
-      });
-    }
-
-    if (!process.env.JWT_SECRET) {
-      throw new Error("JWT_SECRET is not configured");
-    }
-
-    const token = jwt.sign(
-      {
-        _id: user._id,
-        email: user.email,
-      },
-      process.env.JWT_SECRET,
-      {
-        expiresIn: "1d",
-      }
-    );
-
-    return res.status(200).json({
-      message: "Login successful",
-      token,
-      expiresIn: "1d",
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        profilePic: user.profilePic,
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({
-      message: "Error in login user",
-      error: error.message,
+  if (!email?.trim() || !password) {
+    return res.status(400).json({
+      message: "Email and password are required",
     });
   }
-};
 
-export const forgetPassword = async (req, res) => {
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = await findUserByEmail(normalizedEmail);
+
+  if (!user) {
+    return res.status(404).json({
+      message: "User not found",
+    });
+  }
+
+  const isPasswordCorrect = await bcrypt.compare(
+    password,
+    user.password
+  );
+
+  if (!isPasswordCorrect) {
+    return res.status(401).json({
+      message: "Invalid email or password"
+    });
+  }
+
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is not configured");
+  }
+
+  const token = jwt.sign(
+    {
+      id: user.id,
+      email: user.email,
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: "1d",
+    }
+  );
+
+  return res.status(200).json({
+    message: "Login successful",
+    token,
+    expiresIn: "1d",
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      profilePic: user.profile_pic,
+    },
+  });
+
+});
+
+export const forgetPassword = expressAsyncHandler(async (req, res) => {
   const { email } = req.body;
 
-  try {
-    if (!email?.trim()) {
-      return res.status(400).json({
-        msg: "Email is required",
-        success: false,
-      });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    const user = await UserCollection.findOne({
-      email: normalizedEmail,
-    });
-
-    if (!user) {
-      return res.status(404).json({
-        msg: "Email does not exist",
-        success: false,
-      });
-    }
-
-    const resetToken = randomstring.generate(30);
-
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = Date.now() + 15 * 60 * 1000;
-
-    await user.save();
-
-    await sendEmail(normalizedEmail, resetToken);
-
-    return res.status(200).json({
-      msg: "Please check your email to reset your password",
-      success: true,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      msg: "Error in forgot password",
+  if (!email?.trim()) {
+    return res.status(400).json({
+      msg: "Email is required",
       success: false,
-      error: error.message,
     });
   }
-};
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const user = await findUserByEmail(normalizedEmail);
+  if (!user) {
+    return res.status(404).json({
+      msg: "Email does not exist",
+      success: false,
+    });
+  }
+  const resetToken = randomstring.generate(30);
+
+  const resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000);
+
+  await updateResetToken(
+    user.id,
+    resetToken,
+    resetPasswordExpires
+  );
+
+  await sendEmail(normalizedEmail, resetToken);
+
+  return res.status(200).json({
+    msg: "Please check your email to reset your password",
+    success: true,
+  });
+});
 
 const sendEmail = async (email, resetToken) => {
   const transporter = nodemailer.createTransport({
@@ -152,6 +156,9 @@ const sendEmail = async (email, resetToken) => {
       pass: process.env.EMAIL_APP_PASSWORD,
     },
   });
+
+  await transporter.verify();
+
 
   const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
@@ -165,107 +172,174 @@ const sendEmail = async (email, resetToken) => {
   return info;
 };
 
-export const resetPsssword = async (req, res) => {
-  let token = req.params.token
-  let user = await UserCollection.findOne({ resetPasswordToken: token });
+export const resetPassword = expressAsyncHandler(async (req, res) => {
+  const token = req.params.token
+  const user = await findUserByResetToken(token)
   if (user) {
-    res.render('resetPassword', { token })
-  }
-  else {
-    res.status(500).json("token expire")
+    return res.render("resetPassword", { token });
   }
 
-}
+  return res.status(400).json({
+    message: "Token expired",
+  });
 
-export const passwordReset = async (req, res) => {
+})
+
+
+export const passwordReset = expressAsyncHandler(async (req, res) => {
   const { token } = req.params;
   const { newPassword } = req.body;
 
-  try {
-    if (!newPassword || newPassword.length < 8) {
-      return res.status(400).json({
-        msg: "Password must be at least 8 characters",
-        success: false,
-      });
-    }
-
-    const user = await UserCollection.findOne({
-      resetPasswordToken: token,
-      resetPasswordExpires: {
-        $gt: Date.now(),
-      },
-    });
-
-    if (!user) {
-      return res.status(400).json({
-        msg: "Reset token is invalid or expired",
-        success: false,
-      });
-    }
-
-    user.password = newPassword;
-    user.resetPasswordToken = null;
-    user.resetPasswordExpires = null;
-
-    await user.save();
-
-    return res.status(200).json({
-      msg: "Password updated successfully",
-      success: true,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      msg: "Error in password reset",
+  if (!newPassword || newPassword.length < 8) {
+    return res.status(400).json({
+      msg: "Password must be at least 8 characters",
       success: false,
-      error: error.message,
     });
   }
-};
 
-export const updateUser = async (req, res) => {
+  const user = await findValidResetToken(token);
+
+  if (!user) {
+    return res.status(400).json({
+      msg: "Reset token is invalid or expired",
+      success: false,
+    });
+  }
+
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+  await updatePassword(user.id, hashedPassword);
+
+  return res.status(200).json({
+    msg: "Password updated successfully",
+    success: true,
+  });
+});
+
+export const updateUser = expressAsyncHandler(async (req, res) => {
   const { name, password, profilePic } = req.body;
-  const { _id, email } = req.user;
-  try {
-    let user = await UserCollection.findById(_id)
-    if (user) {
-      if (name) {
-        user.name = name
+  const { id } = req.user;
 
-      }
-      if (password) {
-        user.password = password
-      } if (profilePic) {
-        user.profilePic = profilePic
-      }
-      await user.save()
-    } else {
-      res.status(400).json({ message: 'user not found' })
-    }
-    res.status(200).json({ message: 'user updated successfully' })
+  const user = await findUserById(id);
 
-  } catch (error) {
-    res.status(500).json({ message: 'error in updating user', error: error.message })
+  if (!user) {
+    return res.status(404).json({
+      message: "User not found",
+    });
   }
 
-}
+  let hashedPassword = user.password;
 
-export const deleteUser = async (req, res) => {
-  const { _id } = req.user
-  try {
-    await UserCollection.findByIdAndDelete(_id)
-    res.status(200).json({ message: 'account deleted successfully' })
-  } catch (error) {
-    res.status(500).json({ message: 'error in deleting user', error: error.message })
+  if (password) {
+    hashedPassword = await bcrypt.hash(password, 10);
   }
 
-}
+  await updateUserQuery(
+    id,
+    name || user.name,
+    hashedPassword,
+    profilePic || user.profile_pic
+  );
 
-export const getUserDetails = async (req, res) => {
-  const { _id } = req.user;
-  try {
-    let user = await UserCollection.findById(_id)
-    res.status(200).json({ message: 'successfully', user })
-  } catch (error) {
-    res.status(500).json({ error: error.message, message: 'error in getting user' })
+  return res.status(200).json({
+    message: "User updated successfully",
+  });
+});
+
+export const deleteUser = expressAsyncHandler(async (req, res) => {
+  const { id } = req.user;
+
+  await deleteUserQuery(id);
+
+  return res.status(200).json({
+    message: "Account deleted successfully",
+  });
+});
+
+
+export const getUserDetails = expressAsyncHandler(async (req, res) => {
+  const { id } = req.user;
+
+  const user = await findUserById(id);
+
+  return res.status(200).json({
+    message: "User fetched successfully",
+    user,
+  });
+});
+
+export const logoutUser = expressAsyncHandler(async(req,res)=> {
+  return res.status(200).json({
+    message: "log out successful"
+  })
+})
+
+export const getUsers = expressAsyncHandler(async (req, res) => {
+  const users = await getAllUsers();
+
+  return res.status(200).json({
+    message: "Users fetched successfully",
+    users,
+  });
+});
+
+export const findUsers = expressAsyncHandler(async (req, res) => {
+  const { search } = req.query;
+
+  if (!search?.trim()) {
+    return res.status(400).json({
+      message: "Search value is required",
+    });
   }
-}
+
+  const users = await searchUsers(search.trim());
+
+  return res.status(200).json({
+    message: "Users fetched successfully",
+    users,
+  });
+});
+
+export const changePassword = expressAsyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const { id } = req.user;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({
+      message: "Current password and new password are required",
+    });
+  }
+
+  if (newPassword.length < 8) {
+    return res.status(400).json({
+      message: "New password must be at least 8 characters",
+    });
+  }
+
+  const user = await findUserById(id);
+
+  if (!user) {
+    return res.status(404).json({
+      message: "User not found",
+    });
+  }
+
+  const isPasswordCorrect = await bcrypt.compare(
+    currentPassword,
+    user.password
+  );
+
+  if (!isPasswordCorrect) {
+    return res.status(401).json({
+      message: "Current password is incorrect",
+    });
+  }
+
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+  await updatePassword(id, hashedPassword);
+
+  return res.status(200).json({
+    message: "Password changed successfully",
+  });
+});

@@ -1,100 +1,129 @@
-import mongoose from "mongoose";
-import bcrypt from "bcryptjs";
-import validator from "validator";
-
-const userSchema = new mongoose.Schema(
-  {
-    name: {
-      type: String,
-      required: [true, "Name is required"],
-      trim: true,
-      minlength: [2, "Name must be at least 2 characters"],
-      maxlength: [50, "Name cannot exceed 50 characters"],
-    },
-
-    email: {
-      type: String,
-      required: [true, "Email is required"],
-      trim: true,
-      unique: true,
-      lowercase: true,
-      validate: {
-        validator: validator.isEmail,
-        message: "Please provide a valid email address",
-      },
-    },
-
-    password: {
-      type: String,
-      required: [true, "Password is required"],
-      minlength: [8, "Password must be at least 8 characters"],
-      select: false,
-    },
-
-    sendMail: {
-      type: [
-        {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "mails",
-        },
-      ],
-      default: [],
-    },
-
-    recivedMail: {
-      type: [
-        {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "mails",
-        },
-      ],
-      default: [],
-    },
-
-    resetPasswordToken: {
-      type: String,
-      default: null,
-      select: false,
-    },
-
-    resetPasswordExpires: {
-      type: Date,
-      default: null,
-      select: false,
-    },
-
-    profilePic: {
-      type: String,
-      trim: true,
-      default:
-        "https://img.freepik.com/premium-vector/profile-picture-icon-human-symbol-man-women-sign-people-person-user-profile-avatar-icon_659151-3962.jpg?w=740",
-    },
-  },
-  {
-    timestamps: true,
-  }
-);
+import db from "../config/db.js"
 
 
-userSchema.pre("save", async function (next) {
-  try {
-    if (!this.isModified("password")) {
-      return next();
-    }
+export const findUserByEmail = async (email) => {
+  const [rows] = await db.query(
+    "SELECT * From users WHERE email = ?",
+    [email]
+  )
+  return rows[0]
+}
 
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
+export const createUser = async (name, email, password) => {
+  const [result] = await db.query(
+    `INSERT INTO users (name, email, password)
+    VALUES (?, ?, ?)`,
+    [name, email, password]
+  )
 
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
+  return result
+}
 
-userSchema.methods.comparePassword = async function (enteredPassword) {
-  return bcrypt.compare(enteredPassword, this.password);
+
+export const updateResetToken = async (
+  id,
+  resetToken,
+  resetPasswordExpires
+) => {
+  const [result] = await db.query(
+    `UPDATE users
+     SET reset_password_token = ?,
+         reset_password_expires = ?
+     WHERE id = ?`,
+    [resetToken, resetPasswordExpires, id]
+  );
+
+  return result;
 };
 
-const UserCollection = mongoose.model("users", userSchema);
+export const findUserByResetToken = async(token) => {
+const [rows] = await db.query(
+  `SELECT * FROM users
+  WHERE reset_password_token = ?`,
+  [token]
+  
+)
+return rows[0];
+}
 
-export default UserCollection;
+export const findValidResetToken = async (token) => {
+  const [rows] = await db.query(
+    `SELECT * FROM users
+     WHERE reset_password_token = ?
+     AND reset_password_expires > NOW()`,
+    [token]
+  );
+
+  return rows[0];
+};
+
+export const updatePassword = async (id, hashedPassword) => {
+  const [result] = await db.query(
+    `UPDATE users
+     SET password = ?,
+         reset_password_token = NULL,
+         reset_password_expires = NULL
+     WHERE id = ?`,
+    [hashedPassword, id]
+  );
+
+  return result;
+};
+
+   
+export const updateUserQuery = async (
+  id,
+  name,
+  password,
+  profilePic
+) => {
+  const [result] = await db.query(
+    `UPDATE users
+     SET name = ?,
+         password = ?,
+         profile_pic = ?
+     WHERE id = ?`,
+    [name, password, profilePic, id]
+  );
+
+  return result;
+};
+
+export const deleteUserQuery = async (id) => {
+  const [result] = await db.query(
+    `DELETE FROM users WHERE id = ?`,
+    [id]
+  );
+
+  return result;
+};
+
+export const findUserById = async (id) => {
+  const [rows] = await db.query(
+    `SELECT * FROM users WHERE id = ?`,
+    [id]
+  );
+
+  return rows[0];
+};
+
+export const getAllUsers = async () => {
+  const [rows] = await db.query(
+    `SELECT id, name, email, profile_pic
+     FROM users`
+  );
+
+  return rows;
+};
+
+export const searchUsers = async (search) => {
+  const [rows] = await db.query(
+    `SELECT id, name, email, profile_pic
+     FROM users
+     WHERE name LIKE ?
+     OR email LIKE ?`,
+    [`%${search}%`, `%${search}%`]
+  );
+
+  return rows;
+};

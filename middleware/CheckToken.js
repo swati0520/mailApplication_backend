@@ -1,26 +1,34 @@
-// const jwt = require('jsonwebtoken')
-import jwt from 'jsonwebtoken'
+import jwt from "jsonwebtoken";
 
-const checkToken = async (req, res, next) => {
-  let token = req.headers.authorization;
+const checkToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
 
-  if (!token) {
-    return res.status(400).json({ message: "token not found" });
+  if (!authHeader) {
+    return res.status(401).json({
+      message: "Token not found",
+    });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, function (err, decoded) {
+  const token = authHeader.startsWith("Bearer ")
+    ? authHeader.split(" ")[1]
+    : authHeader;
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) {
       if (err.name === "TokenExpiredError") {
-        return res.status(401).json({ message: "token expired" });
-      } else if (err.name === "JsonWebTokenError") {
-        return res.status(401).json({ message: "invalid token" });
-      } else {
-        return res.json({ message: "authentication failed" });
+        return res.status(401).json({
+          message: "Token expired",
+        });
       }
+
+      return res.status(401).json({
+        message: "Invalid token",
+      });
     }
-    req.user = decoded
-    next()
+
+    req.user = decoded;
+    next();
   });
 };
 
-export default checkToken
+export default checkToken;
