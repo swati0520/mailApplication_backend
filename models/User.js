@@ -1,6 +1,5 @@
 import db from "../config/db.js"
 
-
 export const findUserByEmail = async (email) => {
   const [rows] = await db.query(
     "SELECT * From users WHERE email = ?",
@@ -127,3 +126,51 @@ export const searchUsers = async (search) => {
 
   return rows;
 };
+
+export const findUserByGoogleId = async (googleId) => {
+  const [rows] = await db.query(
+    "SELECT * FROM users WHERE google_id = ?",
+    [googleId]
+  );
+
+  return rows[0];
+};
+
+export const createGoogleUser = async (
+  name,
+  email,
+  googleId,
+  profilePic
+) => {
+  const [result] = await db.query(
+    `INSERT INTO users
+      (name, email, password, google_id, profile_pic)
+     VALUES (?, ?, NULL, ?, ?)`,
+    [name, email, googleId, profilePic]
+  );
+
+  return result;
+};
+
+export const updateGoogleId = async (id, googleId) => {
+  const [result] = await db.query(
+    `UPDATE users
+     SET google_id = ?
+     WHERE id = ?`,
+    [googleId, id]
+  );
+
+  return result;
+};
+
+export const unlinkGoogleAccount = async (id) => {
+  const [result] = await db.query(
+    `UPDATE users
+     SET google_id = NULL
+     WHERE id = ?`,
+    [id]
+  );
+
+  return result;
+};
+

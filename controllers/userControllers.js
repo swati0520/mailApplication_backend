@@ -15,7 +15,9 @@ import {
   deleteUserQuery,
   getAllUsers,
   searchUsers,
+  unlinkGoogleAccount
 } from "../models/User.js";
+import { setAuthCookie } from "../utils/authCookie.js";
 
 
 export const createUser = expressAsyncHandler(async (req, res) => {
@@ -77,7 +79,7 @@ export const loginUser = expressAsyncHandler(async (req, res) => {
 
   if (!isPasswordCorrect) {
     return res.status(401).json({
-      message: "Invalid email or password"
+      message: "Invalid email or password",
     });
   }
 
@@ -96,9 +98,10 @@ export const loginUser = expressAsyncHandler(async (req, res) => {
     }
   );
 
+  setAuthCookie(res, token);
+
   return res.status(200).json({
     message: "Login successful",
-    token,
     expiresIn: "1d",
     user: {
       id: user.id,
@@ -107,7 +110,6 @@ export const loginUser = expressAsyncHandler(async (req, res) => {
       profilePic: user.profile_pic,
     },
   });
-
 });
 
 export const forgetPassword = expressAsyncHandler(async (req, res) => {
@@ -268,11 +270,13 @@ export const getUserDetails = expressAsyncHandler(async (req, res) => {
   });
 });
 
-export const logoutUser = expressAsyncHandler(async(req,res)=> {
+export const logoutUser = expressAsyncHandler(async (req, res) => {
+  res.clearCookie("token");
+
   return res.status(200).json({
-    message: "log out successful"
-  })
-})
+    message: "Logout successful",
+  });
+});
 
 export const getUsers = expressAsyncHandler(async (req, res) => {
   const users = await getAllUsers();
@@ -341,5 +345,75 @@ export const changePassword = expressAsyncHandler(async (req, res) => {
 
   return res.status(200).json({
     message: "Password changed successfully",
+  });
+});
+
+
+
+export const googleLogin = expressAsyncHandler(async (req, res) => {
+  if (!process.env.JWT_SECRET) {
+    return res.status(500).json({
+      message: "JWT_SECRET is not configured",
+    });
+  }
+
+  const token = jwt.sign(
+    {
+      id: req.user.id,
+      email: req.user.email,
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: "1d",
+    }
+  );
+
+  setAuthCookie(res, token);
+
+  return res.status(200).json({
+    message: "Google login successful",
+    expiresIn: "1d",
+    user: {
+      id: req.user.id,
+      name: req.user.name,
+      email: req.user.email,
+      profilePic: req.user.profile_pic,
+    },
+  });
+});
+
+export const googleLoginFailed = expressAsyncHandler(async (req, res) => {
+  return res.status(401).json({
+    message: "Google authentication failed",
+  });
+});
+
+export const unlinkGoogle = expressAsyncHandler(async (req, res) => {
+  const { id } = req.user;
+
+  const user = await findUserById(id);
+
+  if (!user) {
+    return res.status(404).json({
+      message: "User not found",
+    });
+  }
+
+  if (!user.password) {
+    return res.status(400).json({
+      message: "Set a password before unlinking your Google account",
+    });
+  }
+
+  if (!user.google_id) {
+    return res.status(400).json({
+      message: "Google account is not linked",
+    });
+  }
+
+  await unlinkGoogleAccount(id);
+
+  return res.status(200).json({
+    message: "Google account unlinked successfully",
   });
 });
