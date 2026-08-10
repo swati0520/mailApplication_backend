@@ -73,16 +73,18 @@ export const updatePassword = async (id, hashedPassword) => {
 export const updateUserQuery = async (
   id,
   name,
+  email,
   password,
   profilePic
 ) => {
   const [result] = await db.query(
     `UPDATE users
      SET name = ?,
+         email = ?,
          password = ?,
          profile_pic = ?
      WHERE id = ?`,
-    [name, password, profilePic, id]
+    [name, email, password, profilePic, id]
   );
 
   return result;

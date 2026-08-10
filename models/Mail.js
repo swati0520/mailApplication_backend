@@ -51,7 +51,7 @@ export const getInboxMails = async (
     `SELECT *
      FROM mails
      WHERE receiver_user_id = ?
-     AND is_deleted = FALSE
+     AND receiver_is_deleted = FALSE
      ORDER BY created_at DESC
      LIMIT ? OFFSET ?`,
     [receiver_user_id, limit, offset]
@@ -61,7 +61,7 @@ export const getInboxMails = async (
     `SELECT COUNT(*) AS totalMails
      FROM mails
      WHERE receiver_user_id = ?
-     AND is_deleted = FALSE`,
+     AND receiver_is_deleted = FALSE`,
     [receiver_user_id]
   );
 
@@ -71,13 +71,11 @@ export const getInboxMails = async (
   };
 };
 
-// Find Mail By ID
 export const findMailById = async (mailId) => {
   const [rows] = await db.query(
     `SELECT *
      FROM mails
-     WHERE id = ?
-     AND is_deleted = FALSE`,
+     WHERE id = ?`,
     [mailId]
   );
 
@@ -90,7 +88,7 @@ export const getSentMails = async (sender_user_id) => {
     `SELECT *
      FROM mails
      WHERE sender_user_id = ?
-     AND is_deleted = FALSE
+     AND sender_is_deleted = FALSE
      ORDER BY created_at DESC`,
     [sender_user_id]
   );
@@ -102,7 +100,7 @@ export const getSentMails = async (sender_user_id) => {
 export const deleteSentMailQuery = async (mailId) => {
   const [result] = await db.query(
     `UPDATE mails
-     SET is_deleted = TRUE
+     SET sender_is_deleted = TRUE
      WHERE id = ?`,
     [mailId]
   );
@@ -114,7 +112,7 @@ export const deleteSentMailQuery = async (mailId) => {
 export const deleteReceivedMailQuery = async (mailId) => {
   const [result] = await db.query(
     `UPDATE mails
-     SET is_deleted = TRUE
+     SET receiver_is_deleted = TRUE
      WHERE id = ?`,
     [mailId]
   );
@@ -127,8 +125,7 @@ export const markMailAsRead = async (mailId) => {
   const [result] = await db.query(
     `UPDATE mails
      SET is_read = TRUE
-     WHERE id = ?
-     AND is_deleted = FALSE`,
+     WHERE id = ?`,
     [mailId]
   );
 
@@ -140,8 +137,7 @@ export const markMailAsStarred = async (mailId) => {
   const [result] = await db.query(
     `UPDATE mails
      SET is_starred = TRUE
-     WHERE id = ?
-     AND is_deleted = FALSE`,
+     WHERE id = ?`,
     [mailId]
   );
 
@@ -154,7 +150,7 @@ export const markMailAsImportant = async (mailId) => {
     `UPDATE mails
      SET is_important = TRUE
      WHERE id = ?
-     AND is_deleted = FALSE`,
+     `,
     [mailId]
   );
 
@@ -167,7 +163,7 @@ export const markMailAsArchived = async (mailId) => {
     `UPDATE mails
      SET is_archived = TRUE
      WHERE id = ?
-     AND is_deleted = FALSE`,
+    `,
     [mailId]
   );
 
@@ -180,9 +176,30 @@ export const markMailAsSpam = async (mailId) => {
     `UPDATE mails
      SET is_spam = TRUE
      WHERE id = ?
-     AND is_deleted = FALSE`,
+     `,
     [mailId]
   );
 
   return result;
+};
+
+export const getAllMails = async (userId) => {
+  const [rows] = await db.query(
+    `SELECT *
+     FROM mails
+     WHERE
+       (
+         sender_user_id = ?
+         AND sender_is_deleted = FALSE
+       )
+       OR
+       (
+         receiver_user_id = ?
+         AND receiver_is_deleted = FALSE
+       )
+     ORDER BY created_at DESC`,
+    [userId, userId]
+  );
+
+  return rows;
 };

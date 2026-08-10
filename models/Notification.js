@@ -28,22 +28,24 @@ export const getNotifications = async (id) => {
   return rows;
 };
 
-export const markNotificationAsRead = async (id) => {
+export const markNotificationAsRead = async (id, userId) => {
   const [result] = await db.query(
     `UPDATE notifications
      SET is_read = TRUE
-     WHERE id = ?`,
-    [id]
+     WHERE id = ?
+     AND user_id = ?`,
+    [id, userId]
   );
 
   return result;
 };
 
-export const deleteNotification = async (id) => {
+export const deleteNotification = async (id, userId) => {
   const [result] = await db.query(
     `DELETE FROM notifications
-     WHERE id = ?`,
-    [id]
+     WHERE id = ?
+     AND user_id = ?`,
+    [id, userId]
   );
 
   return result;

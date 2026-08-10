@@ -225,7 +225,7 @@ export const passwordReset = expressAsyncHandler(async (req, res) => {
 });
 
 export const updateUser = expressAsyncHandler(async (req, res) => {
-  const { name, password } = req.body;
+  const { name, email, password } = req.body;
   const { id } = req.user;
 
   const user = await findUserById(id);
@@ -238,6 +238,7 @@ export const updateUser = expressAsyncHandler(async (req, res) => {
 
   let hashedPassword = user.password;
   let profilePic = user.profile_pic;
+  const normalizedEmail = email?.trim().toLowerCase() || user.email;
 
   // Password update
   if (password) {
@@ -257,6 +258,7 @@ export const updateUser = expressAsyncHandler(async (req, res) => {
   await updateUserQuery(
     id,
     name || user.name,
+    normalizedEmail,
     hashedPassword,
     profilePic
   );
@@ -266,7 +268,7 @@ export const updateUser = expressAsyncHandler(async (req, res) => {
     user: {
       id: user.id,
       name: name || user.name,
-      email: user.email,
+      email: normalizedEmail,
       profilePic,
     },
   });
@@ -403,22 +405,15 @@ export const googleLogin = expressAsyncHandler(async (req, res) => {
     },
     process.env.JWT_SECRET,
     {
-      expiresIn: "1d",
+      expiresIn: "365d",
     }
   );
 
   setAuthCookie(res, token);
 
-  return res.status(200).json({
-    message: "Google login successful",
-    expiresIn: "1d",
-    user: {
-      id: req.user.id,
-      name: req.user.name,
-      email: req.user.email,
-      profilePic: req.user.profile_pic,
-    },
-  });
+  return res.redirect(
+    `${process.env.FRONTEND_URL}/`
+  );
 });
 
 export const googleLoginFailed = expressAsyncHandler(async (req, res) => {

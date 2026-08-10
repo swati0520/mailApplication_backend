@@ -60,8 +60,15 @@ export const getUserNotifications = expressAsyncHandler(async (req, res) => {
 
 export const readNotification = expressAsyncHandler(async (req, res) => {
   const { id } = req.params;
+  const userId = req.user?.id;
 
-  const result = await markNotificationAsRead(id);
+  if (!userId) {
+    return res.status(401).json({
+      message: "Unauthorized user",
+    });
+  }
+
+  const result = await markNotificationAsRead(id, userId);
 
   if (result.affectedRows === 0) {
     return res.status(404).json({
@@ -76,8 +83,15 @@ export const readNotification = expressAsyncHandler(async (req, res) => {
 
 export const removeNotification = expressAsyncHandler(async (req, res) => {
   const { id } = req.params;
+  const userId = req.user?.id;
 
-  const result = await deleteNotification(id);
+  if (!userId) {
+    return res.status(401).json({
+      message: "Unauthorized user",
+    });
+  }
+
+  const result = await deleteNotification(id, userId);
 
   if (result.affectedRows === 0) {
     return res.status(404).json({

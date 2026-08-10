@@ -6,12 +6,27 @@ const ai = new GoogleGenAI({
 });
 
 export const askGemini = async (prompt) => {
+    const emailPrompt = `
+Write an email based only on the user's request below.
+
+User request:
+${prompt}
+
+Rules:
+- Write exactly one natural, human-style, ready-to-send email.
+- Return only the email body. Do not add a subject or any commentary.
+- Never use square-bracket placeholders or invent names, dates, or personal details.
+- If details are missing, phrase the email naturally without placeholders.
+- Never provide options, templates, tips, explanations, or instructions.
+- Do not label any part as "Option", "Template", or "Quick Tips".
+`;
+
     const response = await ai.models.generateContent({
         model: "gemini-3.6-flash",
-        contents: prompt,
+        contents: emailPrompt,
     });
 
-    return response.text;
+    return response.text.trim();
 };
 
 export const summarizeMail = async (subject, message) => {
@@ -69,17 +84,17 @@ Instructions:
 
 export const suggestMailSubject = async (message) => {
     const prompt = `
-Suggest a clear and concise subject line for the following email.
+Create one short, relevant subject for the email context below.
 
-Email:
+Email context:
 ${message}
 
-Instructions:
-- Understand the main purpose of the email.
-- Give only one subject line.
-- Keep it short and professional.
-- Do not use "Subject:" before the answer.
-- Do not use quotes.
+Rules:
+- Return exactly one plain-text subject on one line.
+- Return only the subject text, with no "Subject:" prefix or quotes.
+- Never use placeholders or invent missing personal details.
+- Never provide alternatives, options, explanations, or commentary.
+- Keep it concise and describe the email's main purpose.
 `;
 
     const response = await ai.models.generateContent({

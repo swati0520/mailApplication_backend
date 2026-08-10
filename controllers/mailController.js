@@ -11,11 +11,97 @@ import {
   markMailAsImportant,
   markMailAsArchived,
   markMailAsSpam,
+  getAllMails,
 } from "../models/Mail.js";
 
 import {
   findUserByEmail,
 } from "../models/User.js";
+
+const getAuthorizedMail = async (
+  req,
+  res,
+  { ownerField, notFoundMessage = "Mail not found" } = {}
+) => {
+  const mailId = req.params.mailId ?? req.params._id;
+
+  const mail = await findMailById(mailId);
+
+  if (!mail) {
+    res.status(404).json({
+      message: notFoundMessage,
+    });
+    return null;
+  }
+
+  const userId = req.user?.id;
+
+  if (!userId) {
+    res.status(401).json({
+      message: "Unauthorized user",
+    });
+    return null;
+  }
+
+  // Delete endpoint ke liye specific owner check
+  if (ownerField) {
+    const isOwner =
+      String(mail[ownerField]) === String(userId);
+
+    if (!isOwner) {
+      res.status(403).json({
+        message: "Forbidden",
+      });
+      return null;
+    }
+
+    // Check user's own deletion state
+    const deletedField =
+      ownerField === "sender_user_id"
+        ? "sender_is_deleted"
+        : "receiver_is_deleted";
+
+    if (mail[deletedField]) {
+      res.status(404).json({
+        message: notFoundMessage,
+      });
+      return null;
+    }
+
+    return mail;
+  }
+
+  // General mail access
+  const isSender =
+    String(mail.sender_user_id) === String(userId);
+
+  const isReceiver =
+    String(mail.receiver_user_id) === String(userId);
+
+  if (!isSender && !isReceiver) {
+    res.status(403).json({
+      message: "Forbidden",
+    });
+    return null;
+  }
+
+  // User ki side se mail already deleted hai ya nahi
+  if (isSender && mail.sender_is_deleted) {
+    res.status(404).json({
+      message: notFoundMessage,
+    });
+    return null;
+  }
+
+  if (isReceiver && mail.receiver_is_deleted) {
+    res.status(404).json({
+      message: notFoundMessage,
+    });
+    return null;
+  }
+
+  return mail;
+};
 
 
 
@@ -158,23 +244,11 @@ export const getRecivedMail = expressAsyncHandler(async (req, res) => {
 
 export const deleteSentMail = expressAsyncHandler(async (req, res) => {
   const mailId = req.params._id;
-  const email = req.user?.email;
+  const mail = await getAuthorizedMail(req, res, {
+    ownerField: "sender_user_id",
+  });
 
-  if (!email) {
-    return res.status(401).json({
-      message: "Unauthorized user",
-    });
-  }
-
-  const user = await findUserByEmail(
-    email.trim().toLowerCase()
-  );
-
-  if (!user) {
-    return res.status(404).json({
-      message: "User not found",
-    });
-  }
+  if (!mail) return;
 
   await deleteSentMailQuery(mailId);
 
@@ -185,23 +259,11 @@ export const deleteSentMail = expressAsyncHandler(async (req, res) => {
 
 export const deleteRecivedMail = expressAsyncHandler(async (req, res) => {
   const mailId = req.params._id;
-  const email = req.user?.email;
+  const mail = await getAuthorizedMail(req, res, {
+    ownerField: "receiver_user_id",
+  });
 
-  if (!email) {
-    return res.status(401).json({
-      message: "Unauthorized user",
-    });
-  }
-
-  const user = await findUserByEmail(
-    email.trim().toLowerCase()
-  );
-
-  if (!user) {
-    return res.status(404).json({
-      message: "User not found",
-    });
-  }
+  if (!mail) return;
 
   await deleteReceivedMailQuery(mailId);
 
@@ -211,15 +273,9 @@ export const deleteRecivedMail = expressAsyncHandler(async (req, res) => {
 });
 
 export const getMailDetails = expressAsyncHandler(async (req, res) => {
-  const { mailId } = req.params;
+  const mail = await getAuthorizedMail(req, res);
 
-  const mail = await findMailById(mailId);
-
-  if (!mail) {
-    return res.status(404).json({
-      message: "Mail not found",
-    });
-  }
+  if (!mail) return;
 
   return res.status(200).json({
     message: "Mail fetched successfully",
@@ -227,26 +283,33 @@ export const getMailDetails = expressAsyncHandler(async (req, res) => {
   });
 });
 
-export const readMail = expressAsyncHandler(async(req,res)=> {
-  const {mailId} = req.params;
+export const readMail = expressAsyncHandler(async (req, res) => {
+  const { mailId } = req.params;
 
-  const result = await markMailAsRead(mailId)
+  const mail = await getAuthorizedMail(req, res, {
+    notFoundMessage: "Mail not found",
+  });
+
+  if (!mail) return;
+
+  const result = await markMailAsRead(mailId);
 
   if (result.affectedRows === 0) {
     return res.status(404).json({
-      message:"mail not found",
+      message: "Mail not found",
+    });
+  }
 
-    })
-     }
-
-     return res.status(200).json({
+  return res.status(200).json({
     message: "Mail marked as read successfully",
   });
- 
-})
+});
 
 export const starMail = expressAsyncHandler(async (req, res) => {
   const { mailId } = req.params;
+  const mail = await getAuthorizedMail(req, res);
+
+  if (!mail) return;
 
   const result = await markMailAsStarred(mailId);
 
@@ -263,7 +326,9 @@ export const starMail = expressAsyncHandler(async (req, res) => {
 
 export const importantMail = expressAsyncHandler(async (req, res) => {
   const { mailId } = req.params;
-  
+  const mail = await getAuthorizedMail(req, res);
+
+  if (!mail) return;
 
   const result = await markMailAsImportant(mailId);
 
@@ -280,6 +345,9 @@ export const importantMail = expressAsyncHandler(async (req, res) => {
 
 export const archiveMail = expressAsyncHandler(async (req, res) => {
   const { mailId } = req.params;
+  const mail = await getAuthorizedMail(req, res);
+
+  if (!mail) return;
 
   const result = await markMailAsArchived(mailId);
 
@@ -296,6 +364,9 @@ export const archiveMail = expressAsyncHandler(async (req, res) => {
 
 export const spamMail = expressAsyncHandler(async (req, res) => {
   const { mailId } = req.params;
+  const mail = await getAuthorizedMail(req, res);
+
+  if (!mail) return;
 
   const result = await markMailAsSpam(mailId);
 
@@ -307,6 +378,14 @@ export const spamMail = expressAsyncHandler(async (req, res) => {
 
   return res.status(200).json({
     message: "Mail marked as spam successfully",
+  });
+});
+
+export const getAllMail = expressAsyncHandler(async (req, res) => {
+  const mails = await getAllMails(req.user.id);
+
+  return res.status(200).json({
+    allMails: mails,
   });
 });
 
