@@ -21,12 +21,19 @@ import {
 } from "../controllers/userControllers.js";
 
 import checkToken from "../middleware/CheckToken.js";
+import upload from "../middleware/upload.js";
 
 
 const router = express.Router();
 
 router.post("/create", createUser);
-router.put("/update", checkToken, updateUser);
+// router.put("/update", checkToken, updateUser);
+router.put(
+  "/update",
+  checkToken,
+  upload.single("profilePic"),
+  updateUser
+);
 router.delete("/delete", checkToken, deleteUser);
 router.post("/login", loginUser);
 router.get("/getuser", checkToken, getUserDetails);

@@ -129,10 +129,30 @@ export const getRecivedMail = expressAsyncHandler(async (req, res) => {
     });
   }
 
-  const receivedMails = await getInboxMails(user.id);
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const limit = Math.min(
+    Math.max(Number(req.query.limit) || 10, 1),
+    50
+  );
+
+  const offset = (page - 1) * limit;
+
+  const { mails, totalMails } = await getInboxMails(
+    user.id,
+    limit,
+    offset
+  );
+
+  const totalPages = Math.ceil(totalMails / limit);
 
   return res.status(200).json({
-    receivedMails,
+    receivedMails: mails,
+    pagination: {
+      page,
+      limit,
+      totalMails,
+      totalPages,
+    },
   });
 });
 
@@ -243,7 +263,7 @@ export const starMail = expressAsyncHandler(async (req, res) => {
 
 export const importantMail = expressAsyncHandler(async (req, res) => {
   const { mailId } = req.params;
-  console.log(mailId)
+  
 
   const result = await markMailAsImportant(mailId);
 

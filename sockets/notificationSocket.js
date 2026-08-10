@@ -4,17 +4,17 @@ export const notificationSocket = (socketIO) => {
   io = socketIO;
 
   io.on("connection", (socket) => {
-    console.log("User connected:", socket.id);
+    // console.log("User connected:", socket.id);
 
     socket.on("joinNotification", (userId) => {
       if (!userId) return;
 
       socket.join(`user_${userId}`);
-      console.log(`User ${userId} joined notification room`);
+      // console.log(`User ${userId} joined notification room`);
     });
 
     socket.on("disconnect", () => {
-      console.log("User disconnected:", socket.id);
+      // console.log("User disconnected:", socket.id);
     });
   });
 };

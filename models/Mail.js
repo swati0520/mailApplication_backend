@@ -11,21 +11,20 @@ export const createMail = async (
   body,
   status
 ) => {
-
   const [result] = await db.query(
     `INSERT INTO mails
-    (
-      sender_user_id,
-      receiver_user_id,
-      from_email,
-      to_email,
-      cc,
-      bcc,
-      subject,
-      body,
-      status
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (
+        sender_user_id,
+        receiver_user_id,
+        from_email,
+        to_email,
+        cc,
+        bcc,
+        subject,
+        body,
+        status
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       sender_user_id,
       receiver_user_id,
@@ -42,34 +41,51 @@ export const createMail = async (
   return result;
 };
 
-
-// Get 
-export const getInboxMails = async (receiver_user_id) => {
-
+// Get Inbox Mails with Pagination
+export const getInboxMails = async (
+  receiver_user_id,
+  limit,
+  offset
+) => {
   const [rows] = await db.query(
     `SELECT *
      FROM mails
      WHERE receiver_user_id = ?
      AND is_deleted = FALSE
-     ORDER BY created_at DESC`,
+     ORDER BY created_at DESC
+     LIMIT ? OFFSET ?`,
+    [receiver_user_id, limit, offset]
+  );
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS totalMails
+     FROM mails
+     WHERE receiver_user_id = ?
+     AND is_deleted = FALSE`,
     [receiver_user_id]
   );
 
-  return rows;
+  return {
+    mails: rows,
+    totalMails: countResult[0].totalMails,
+  };
 };
 
+// Find Mail By ID
 export const findMailById = async (mailId) => {
   const [rows] = await db.query(
-    `SELECT * FROM mails
-    WHERE id = ? AND is_deleted = FALSE`,
+    `SELECT *
+     FROM mails
+     WHERE id = ?
+     AND is_deleted = FALSE`,
     [mailId]
   );
-  return rows[0]
+
+  return rows[0];
 };
 
-// Get SENT 
+// Get Sent Mails
 export const getSentMails = async (sender_user_id) => {
-
   const [rows] = await db.query(
     `SELECT *
      FROM mails
@@ -82,9 +98,8 @@ export const getSentMails = async (sender_user_id) => {
   return rows;
 };
 
-// Delete sent 
+// Delete Sent Mail
 export const deleteSentMailQuery = async (mailId) => {
-
   const [result] = await db.query(
     `UPDATE mails
      SET is_deleted = TRUE
@@ -94,10 +109,9 @@ export const deleteSentMailQuery = async (mailId) => {
 
   return result;
 };
-// Delete Received
 
+// Delete Received Mail
 export const deleteReceivedMailQuery = async (mailId) => {
-
   const [result] = await db.query(
     `UPDATE mails
      SET is_deleted = TRUE
@@ -108,16 +122,20 @@ export const deleteReceivedMailQuery = async (mailId) => {
   return result;
 };
 
+// Mark Mail As Read
 export const markMailAsRead = async (mailId) => {
   const [result] = await db.query(
     `UPDATE mails
-  SET is_read = TRUE
-  WHERE id = ?
-  AND is_deleted = FALSE`,
+     SET is_read = TRUE
+     WHERE id = ?
+     AND is_deleted = FALSE`,
     [mailId]
-  )
-  return result
+  );
+
+  return result;
 };
+
+// Mark Mail As Starred
 export const markMailAsStarred = async (mailId) => {
   const [result] = await db.query(
     `UPDATE mails
@@ -130,29 +148,33 @@ export const markMailAsStarred = async (mailId) => {
   return result;
 };
 
+// Mark Mail As Important
 export const markMailAsImportant = async (mailId) => {
   const [result] = await db.query(
-    `UPDATE mails 
-    SET is_important = TRUE
-    WHERE id = ?
-    AND is_deleted = FALSE`,
+    `UPDATE mails
+     SET is_important = TRUE
+     WHERE id = ?
+     AND is_deleted = FALSE`,
     [mailId]
-  )
-  return result
+  );
 
-}
+  return result;
+};
 
+// Archive Mail
 export const markMailAsArchived = async (mailId) => {
   const [result] = await db.query(
-    `UPDATE mails 
-    SET is_archived = TRUE
-    WHERE id = ?
-    AND is_deleted = FALSE`,
+    `UPDATE mails
+     SET is_archived = TRUE
+     WHERE id = ?
+     AND is_deleted = FALSE`,
     [mailId]
-  )
-  return result
+  );
 
-}
+  return result;
+};
+
+// Mark Mail As Spam
 export const markMailAsSpam = async (mailId) => {
   const [result] = await db.query(
     `UPDATE mails
@@ -164,5 +186,3 @@ export const markMailAsSpam = async (mailId) => {
 
   return result;
 };
-
-

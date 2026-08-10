@@ -19,7 +19,7 @@ export const connectDB = async () => {
     console.log("MySQL Connected Successfully");
     connection.release();
   } catch (error) {
-    console.error(error);
+    // console.error(error);
     process.exit(1);
   }
 };

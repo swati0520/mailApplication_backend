@@ -18,6 +18,7 @@ import {
   unlinkGoogleAccount
 } from "../models/User.js";
 import { setAuthCookie } from "../utils/authCookie.js";
+import { uploadToCloudinary } from "../utils/cloudinaryUpload.js";
 
 
 export const createUser = expressAsyncHandler(async (req, res) => {
@@ -64,6 +65,7 @@ export const loginUser = expressAsyncHandler(async (req, res) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
+
   const user = await findUserByEmail(normalizedEmail);
 
   if (!user) {
@@ -94,7 +96,7 @@ export const loginUser = expressAsyncHandler(async (req, res) => {
     },
     process.env.JWT_SECRET,
     {
-      expiresIn: "1d",
+      expiresIn: "365d",
     }
   );
 
@@ -102,7 +104,7 @@ export const loginUser = expressAsyncHandler(async (req, res) => {
 
   return res.status(200).json({
     message: "Login successful",
-    expiresIn: "1d",
+    expiresIn: "365d",
     user: {
       id: user.id,
       name: user.name,
@@ -121,18 +123,22 @@ export const forgetPassword = expressAsyncHandler(async (req, res) => {
       success: false,
     });
   }
+
   const normalizedEmail = email.trim().toLowerCase();
 
   const user = await findUserByEmail(normalizedEmail);
+
   if (!user) {
     return res.status(404).json({
       msg: "Email does not exist",
       success: false,
     });
   }
-  const resetToken = randomstring.generate(30);
 
-  const resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000);
+  const resetToken = randomstring.generate(30);
+  const resetPasswordExpires = new Date(
+    Date.now() + 15 * 60 * 1000
+  );
 
   await updateResetToken(
     user.id,
@@ -219,7 +225,7 @@ export const passwordReset = expressAsyncHandler(async (req, res) => {
 });
 
 export const updateUser = expressAsyncHandler(async (req, res) => {
-  const { name, password, profilePic } = req.body;
+  const { name, password } = req.body;
   const { id } = req.user;
 
   const user = await findUserById(id);
@@ -231,20 +237,38 @@ export const updateUser = expressAsyncHandler(async (req, res) => {
   }
 
   let hashedPassword = user.password;
+  let profilePic = user.profile_pic;
 
+  // Password update
   if (password) {
     hashedPassword = await bcrypt.hash(password, 10);
+  }
+
+  // Profile image upload
+  if (req.file) {
+    const result = await uploadToCloudinary(
+      req.file.buffer,
+      "profile"
+    );
+
+    profilePic = result.secure_url;
   }
 
   await updateUserQuery(
     id,
     name || user.name,
     hashedPassword,
-    profilePic || user.profile_pic
+    profilePic
   );
 
   return res.status(200).json({
     message: "User updated successfully",
+    user: {
+      id: user.id,
+      name: name || user.name,
+      email: user.email,
+      profilePic,
+    },
   });
 });
 
@@ -259,24 +283,39 @@ export const deleteUser = expressAsyncHandler(async (req, res) => {
 });
 
 
+
 export const getUserDetails = expressAsyncHandler(async (req, res) => {
   const { id } = req.user;
 
   const user = await findUserById(id);
 
+  if (!user) {
+    return res.status(404).json({
+      message: "User not found",
+    });
+  }
+
+  const { password, ...userWithoutPassword } = user;
+
   return res.status(200).json({
     message: "User fetched successfully",
-    user,
+    user: userWithoutPassword,
   });
 });
 
 export const logoutUser = expressAsyncHandler(async (req, res) => {
-  res.clearCookie("token");
+   res.clearCookie("token", {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+  });
 
   return res.status(200).json({
     message: "Logout successful",
   });
 });
+
+
 
 export const getUsers = expressAsyncHandler(async (req, res) => {
   const users = await getAllUsers();
