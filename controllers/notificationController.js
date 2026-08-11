@@ -6,8 +6,32 @@ import {
   markNotificationAsRead,
   deleteNotification,
 } from "../models/Notification.js";
+import {
+  findMailById,
+  findMailForUser,
+} from "../models/Mail.js";
 
 import { getIO } from "../sockets/notificationSocket.js";
+
+const authorizeNotificationMail = async (mailId, userId, res) => {
+  const mail = await findMailById(mailId);
+  if (!mail) {
+    res.status(404).json({ message: "Mail not found" });
+    return false;
+  }
+
+  const userMail = await findMailForUser(mailId, userId);
+  if (!userMail) {
+    res.status(403).json({ message: "Forbidden" });
+    return false;
+  }
+  if (userMail.is_deleted || userMail.is_permanently_deleted) {
+    res.status(404).json({ message: "Mail not found" });
+    return false;
+  }
+
+  return true;
+};
 
 export const createNotification = expressAsyncHandler(async (req, res) => {
   const { mailId, title, message } = req.body;
@@ -19,9 +43,20 @@ export const createNotification = expressAsyncHandler(async (req, res) => {
     });
   }
 
+  const normalizedMailId =
+    mailId === undefined || mailId === null || mailId === ""
+      ? null
+      : mailId;
+  if (
+    normalizedMailId !== null &&
+    !(await authorizeNotificationMail(normalizedMailId, id, res))
+  ) {
+    return;
+  }
+
   const result = await createNotifications(
     id,
-    mailId || null,
+    normalizedMailId,
     title.trim(),
     message.trim()
   );
@@ -29,7 +64,7 @@ export const createNotification = expressAsyncHandler(async (req, res) => {
   const notification = {
     id: result.insertId,
     userId: id,
-    mailId: mailId || null,
+    mailId: normalizedMailId,
     title: title.trim(),
     message: message.trim(),
     isRead: false,
@@ -48,9 +83,7 @@ export const createNotification = expressAsyncHandler(async (req, res) => {
 });
 
 export const getUserNotifications = expressAsyncHandler(async (req, res) => {
-  const { id } = req.user;
-
-  const notifications = await getNotifications(id);
+  const notifications = await getNotifications(req.user.id);
 
   return res.status(200).json({
     message: "Notifications fetched successfully",
@@ -60,15 +93,7 @@ export const getUserNotifications = expressAsyncHandler(async (req, res) => {
 
 export const readNotification = expressAsyncHandler(async (req, res) => {
   const { id } = req.params;
-  const userId = req.user?.id;
-
-  if (!userId) {
-    return res.status(401).json({
-      message: "Unauthorized user",
-    });
-  }
-
-  const result = await markNotificationAsRead(id, userId);
+  const result = await markNotificationAsRead(id, req.user.id);
 
   if (result.affectedRows === 0) {
     return res.status(404).json({
@@ -83,15 +108,7 @@ export const readNotification = expressAsyncHandler(async (req, res) => {
 
 export const removeNotification = expressAsyncHandler(async (req, res) => {
   const { id } = req.params;
-  const userId = req.user?.id;
-
-  if (!userId) {
-    return res.status(401).json({
-      message: "Unauthorized user",
-    });
-  }
-
-  const result = await deleteNotification(id, userId);
+  const result = await deleteNotification(id, req.user.id);
 
   if (result.affectedRows === 0) {
     return res.status(404).json({

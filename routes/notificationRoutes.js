@@ -1,6 +1,11 @@
 import express from "express";
 
-import { createNotification, getUserNotifications, readNotification, removeNotification } from "../controllers/notificationController.js";
+import {
+  createNotification,
+  getUserNotifications,
+  readNotification,
+  removeNotification,
+} from "../controllers/notificationController.js";
 import checkToken from "../middleware/CheckToken.js";
 
 const router = express.Router();

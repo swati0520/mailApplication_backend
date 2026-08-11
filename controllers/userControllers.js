@@ -1,24 +1,67 @@
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import randomstring from "randomstring";
-import nodemailer from "nodemailer";
 import expressAsyncHandler from "express-async-handler";
+import jwt from "jsonwebtoken";
+import { unlink } from "node:fs/promises";
+import nodemailer from "nodemailer";
+import randomstring from "randomstring";
 import {
-  findUserByEmail,
   createUser as createUserQuery,
-  updateResetToken,
-  findUserByResetToken,
-  findValidResetToken,
-  updatePassword,
-  findUserById,
-  updateUserQuery,
   deleteUserQuery,
+  findUserByEmail,
+  findUserById,
+  findValidResetToken,
   getAllUsers,
   searchUsers,
-  unlinkGoogleAccount
+  unlinkGoogleAccount,
+  updatePassword,
+  updateResetToken,
+  updateUserQuery,
 } from "../models/User.js";
-import { setAuthCookie } from "../utils/authCookie.js";
-import { uploadToCloudinary } from "../utils/cloudinaryUpload.js";
+import {
+  clearAuthCookie,
+  setAuthCookie,
+} from "../utils/authCookie.js";
+import {
+  deleteFromCloudinary,
+  uploadToCloudinary,
+} from "../utils/cloudinaryUpload.js";
+
+const createAuthToken = (user) => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is not configured");
+  }
+
+  return jwt.sign(
+    {
+      id: user.id,
+      email: user.email,
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: "365d",
+    }
+  );
+};
+
+const serializeUser = (user) => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  profilePic: user.profile_pic,
+  isGoogleLinked: Boolean(user.google_id),
+});
+
+const removeLocalUpload = async (filePath) => {
+  if (!filePath) return;
+
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+};
 
 
 export const createUser = expressAsyncHandler(async (req, res) => {
@@ -74,7 +117,7 @@ export const loginUser = expressAsyncHandler(async (req, res) => {
     });
   }
 
-  const isPasswordCorrect = await bcrypt.compare(
+  const isPasswordCorrect = user.password && await bcrypt.compare(
     password,
     user.password
   );
@@ -85,32 +128,14 @@ export const loginUser = expressAsyncHandler(async (req, res) => {
     });
   }
 
-  if (!process.env.JWT_SECRET) {
-    throw new Error("JWT_SECRET is not configured");
-  }
-
-  const token = jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-    },
-    process.env.JWT_SECRET,
-    {
-      expiresIn: "365d",
-    }
-  );
+  const token = createAuthToken(user);
 
   setAuthCookie(res, token);
 
   return res.status(200).json({
     message: "Login successful",
     expiresIn: "365d",
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      profilePic: user.profile_pic,
-    },
+    user: serializeUser(user),
   });
 });
 
@@ -181,8 +206,9 @@ const sendEmail = async (email, resetToken) => {
 };
 
 export const resetPassword = expressAsyncHandler(async (req, res) => {
-  const token = req.params.token
-  const user = await findUserByResetToken(token)
+  const { token } = req.params;
+  const user = await findValidResetToken(token);
+
   if (user) {
     return res.render("resetPassword", { token });
   }
@@ -190,8 +216,7 @@ export const resetPassword = expressAsyncHandler(async (req, res) => {
   return res.status(400).json({
     message: "Token expired",
   });
-
-})
+});
 
 
 export const passwordReset = expressAsyncHandler(async (req, res) => {
@@ -227,50 +252,96 @@ export const passwordReset = expressAsyncHandler(async (req, res) => {
 export const updateUser = expressAsyncHandler(async (req, res) => {
   const { name, email, password } = req.body;
   const { id } = req.user;
+  const rejectUpdate = async (status, message) => {
+    await removeLocalUpload(req.file?.path);
+    return res.status(status).json({ message });
+  };
 
   const user = await findUserById(id);
 
   if (!user) {
-    return res.status(404).json({
-      message: "User not found",
-    });
+    return rejectUpdate(404, "User not found");
   }
 
-  let hashedPassword = user.password;
-  let profilePic = user.profile_pic;
+  if (name !== undefined && (typeof name !== "string" || !name.trim())) {
+    return rejectUpdate(400, "Name cannot be empty");
+  }
+
+  if (email !== undefined && (typeof email !== "string" || !email.trim())) {
+    return rejectUpdate(400, "Email cannot be empty");
+  }
+
+  if (password) {
+    return rejectUpdate(
+      400,
+      "Use the change-password endpoint to update your password"
+    );
+  }
+
+  const updatedName = name?.trim() || user.name;
   const normalizedEmail = email?.trim().toLowerCase() || user.email;
 
-  // Password update
-  if (password) {
-    hashedPassword = await bcrypt.hash(password, 10);
+  if (normalizedEmail !== user.email) {
+    const existingUser = await findUserByEmail(normalizedEmail);
+
+    if (existingUser && String(existingUser.id) !== String(id)) {
+      return rejectUpdate(409, "Email is already in use");
+    }
   }
 
-  // Profile image upload
+  let profilePic = user.profile_pic;
+  let uploadedImage;
+
   if (req.file) {
-    const result = await uploadToCloudinary(
-      req.file.buffer,
-      "profile"
-    );
+    if (!req.file.mimetype?.startsWith("image/")) {
+      return rejectUpdate(400, "Profile picture must be an image");
+    }
 
-    profilePic = result.secure_url;
+    try {
+      uploadedImage = await uploadToCloudinary(req.file.path, "profile");
+      profilePic = uploadedImage.secure_url;
+    } catch (error) {
+      return res.status(502).json({
+        message: "Profile picture upload failed",
+      });
+    } finally {
+      await removeLocalUpload(req.file.path);
+    }
   }
 
-  await updateUserQuery(
-    id,
-    name || user.name,
-    normalizedEmail,
-    hashedPassword,
-    profilePic
-  );
+  try {
+    await updateUserQuery(
+      id,
+      updatedName,
+      normalizedEmail,
+      profilePic
+    );
+  } catch (error) {
+    if (uploadedImage?.public_id) {
+      try {
+        await deleteFromCloudinary(uploadedImage.public_id);
+      } catch {
+        // Preserve the database error if remote cleanup also fails.
+      }
+    }
+
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        message: "Email is already in use",
+      });
+    }
+
+    throw error;
+  }
+
+  const updatedUser = await findUserById(id);
+  const token = createAuthToken(updatedUser);
+  setAuthCookie(res, token);
 
   return res.status(200).json({
     message: "User updated successfully",
-    user: {
-      id: user.id,
-      name: name || user.name,
-      email: normalizedEmail,
-      profilePic,
-    },
+    expiresIn: "365d",
+    user: serializeUser(updatedUser),
   });
 });
 
@@ -297,20 +368,14 @@ export const getUserDetails = expressAsyncHandler(async (req, res) => {
     });
   }
 
-  const { password, ...userWithoutPassword } = user;
-
   return res.status(200).json({
     message: "User fetched successfully",
-    user: userWithoutPassword,
+    user: serializeUser(user),
   });
 });
 
 export const logoutUser = expressAsyncHandler(async (req, res) => {
-   res.clearCookie("token", {
-    httpOnly: true,
-    secure: false,
-    sameSite: "lax",
-  });
+  clearAuthCookie(res);
 
   return res.status(200).json({
     message: "Logout successful",
@@ -349,7 +414,12 @@ export const changePassword = expressAsyncHandler(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const { id } = req.user;
 
-  if (!currentPassword || !newPassword) {
+  if (
+    typeof currentPassword !== "string" ||
+    !currentPassword ||
+    typeof newPassword !== "string" ||
+    !newPassword
+  ) {
     return res.status(400).json({
       message: "Current password and new password are required",
     });
@@ -366,6 +436,12 @@ export const changePassword = expressAsyncHandler(async (req, res) => {
   if (!user) {
     return res.status(404).json({
       message: "User not found",
+    });
+  }
+
+  if (!user.password) {
+    return res.status(400).json({
+      message: "Set a password before using password change",
     });
   }
 
@@ -392,22 +468,7 @@ export const changePassword = expressAsyncHandler(async (req, res) => {
 
 
 export const googleLogin = expressAsyncHandler(async (req, res) => {
-  if (!process.env.JWT_SECRET) {
-    return res.status(500).json({
-      message: "JWT_SECRET is not configured",
-    });
-  }
-
-  const token = jwt.sign(
-    {
-      id: req.user.id,
-      email: req.user.email,
-    },
-    process.env.JWT_SECRET,
-    {
-      expiresIn: "365d",
-    }
-  );
+  const token = createAuthToken(req.user);
 
   setAuthCookie(res, token);
 

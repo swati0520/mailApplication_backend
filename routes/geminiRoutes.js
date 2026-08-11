@@ -7,8 +7,10 @@ import {
   suggestSubject,
   getImportantPoints,
 } from "../controllers/geminiController.js";
+import checkToken from "../middleware/CheckToken.js";
 
 const router = express.Router();
+router.use(checkToken);
 
 router.post("/generate", generateGeminiResponse);
 

@@ -16,18 +16,15 @@ import {
   changePassword,
   googleLogin,
   googleLoginFailed,
-  unlinkGoogle
-
+  unlinkGoogle,
 } from "../controllers/userControllers.js";
 
 import checkToken from "../middleware/CheckToken.js";
 import upload from "../middleware/upload.js";
 
-
 const router = express.Router();
 
 router.post("/create", createUser);
-// router.put("/update", checkToken, updateUser);
 router.put(
   "/update",
   checkToken,
@@ -45,7 +42,6 @@ router.get("/all", checkToken, getUsers);
 router.get("/search", checkToken, findUsers);
 router.put("/change-password", checkToken, changePassword);
 
-// Google OAuth
 router.get(
   "/auth/google",
   passport.authenticate("google", {
@@ -54,7 +50,6 @@ router.get(
 );
 
 
-// router.get("/auth/google/callback",passport.authenticate("google", {session: false,failureRedirect: "/users/login",}),googleLogin);
 router.get(
   "/auth/google/callback",
   passport.authenticate("google", {
