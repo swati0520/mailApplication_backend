@@ -1,4 +1,8 @@
 import db from "../config/db.js";
+import {
+  createInternalIncomingNotifications,
+  emitNewNotifications,
+} from "../services/incomingMailNotificationService.js";
 import { createAttachmentRows } from "./Attachment.js";
 
 const sharedMailSelect = `
@@ -8,9 +12,16 @@ const sharedMailSelect = `
   mails.from_email,
   mails.to_email,
   mails.cc,
+  mails.bcc,
   mails.subject,
   mails.body,
   mails.status,
+  mails.gmail_delivery_status,
+  mails.gmail_message_id,
+  mails.gmail_thread_id,
+  mails.gmail_delivery_error_code,
+  mails.gmail_delivery_error_message,
+  mails.gmail_delivery_updated_at,
   mails.thread_id,
   mails.sender_is_deleted,
   mails.receiver_is_deleted,
@@ -76,6 +87,12 @@ const allowedStateColumns = new Set([
 
 const allowedMailboxRoles = new Set(["sender", "receiver"]);
 const allowedRecipientTypes = new Set(["to", "cc", "bcc"]);
+const allowedGmailDeliveryStatuses = new Set([
+  "internal_only",
+  "pending",
+  "sent",
+  "failed",
+]);
 
 const insertStateRows = (connection, mailId, senderId, receiverId) =>
   connection.query(
@@ -313,9 +330,14 @@ export const createMail = async (
   status,
   thread_id = null,
   recipients = null,
-  attachments = []
+  attachments = [],
+  gmail_delivery_status = "internal_only"
 ) => {
+  if (!allowedGmailDeliveryStatuses.has(gmail_delivery_status)) {
+    throw new Error("Invalid Gmail delivery status");
+  }
   const connection = await db.getConnection();
+  let notifications = [];
 
   try {
     await connection.beginTransaction();
@@ -348,9 +370,10 @@ export const createMail = async (
           subject,
           body,
           status,
+          gmail_delivery_status,
           thread_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         sender_user_id,
         receiver_user_id,
@@ -361,6 +384,7 @@ export const createMail = async (
         subject,
         body,
         status,
+        gmail_delivery_status,
         thread_id,
       ]
     );
@@ -381,8 +405,19 @@ export const createMail = async (
       result.insertId,
       attachments
     );
+    if (status === "sent") {
+      notifications = await createInternalIncomingNotifications({
+        connection,
+        mailId: result.insertId,
+        senderUserId: sender_user_id,
+        senderEmail: from_email,
+        subject,
+        recipients: recipientRows,
+      });
+    }
 
     await connection.commit();
+    emitNewNotifications(notifications);
     return result;
   } catch (error) {
     await connection.rollback();
@@ -390,6 +425,40 @@ export const createMail = async (
   } finally {
     connection.release();
   }
+};
+
+export const updateMailGmailDelivery = async ({
+  mailId,
+  senderUserId,
+  deliveryStatus,
+  gmailMessageId = null,
+  gmailThreadId = null,
+  errorCode = null,
+  errorMessage = null,
+}) => {
+  if (!allowedGmailDeliveryStatuses.has(deliveryStatus)) {
+    throw new Error("Invalid Gmail delivery status");
+  }
+  const [result] = await db.query(
+    `UPDATE mails
+     SET gmail_delivery_status = ?,
+         gmail_message_id = ?,
+         gmail_thread_id = ?,
+         gmail_delivery_error_code = ?,
+         gmail_delivery_error_message = ?,
+         gmail_delivery_updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND sender_user_id = ?`,
+    [
+      deliveryStatus,
+      gmailMessageId,
+      gmailThreadId,
+      errorCode,
+      errorMessage,
+      mailId,
+      senderUserId,
+    ]
+  );
+  return result;
 };
 
 export const createReplyAllMail = async (
@@ -400,6 +469,7 @@ export const createReplyAllMail = async (
   body
 ) => {
   const connection = await db.getConnection();
+  let notifications = [];
 
   try {
     await connection.beginTransaction();
@@ -589,8 +659,17 @@ export const createReplyAllMail = async (
       currentUserId,
       recipients
     );
+    notifications = await createInternalIncomingNotifications({
+      connection,
+      mailId: result.insertId,
+      senderUserId: currentUserId,
+      senderEmail: normalizedCurrentEmail,
+      subject,
+      recipients,
+    });
 
     await connection.commit();
+    emitNewNotifications(notifications);
     return {
       status: "sent",
       mailId: result.insertId,
@@ -1042,14 +1121,16 @@ export const createDraft = async (
   receiverId,
   fromEmail,
   toEmail,
+  cc,
+  bcc,
   subject,
   body
 ) => {
   const [result] = await db.query(
     `INSERT INTO mails
-      (sender_user_id, receiver_user_id, from_email, to_email, subject, body, status)
-     VALUES (?, ?, ?, ?, ?, ?, 'draft')`,
-    [senderId, receiverId, fromEmail, toEmail, subject, body]
+      (sender_user_id, receiver_user_id, from_email, to_email, cc, bcc, subject, body, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+    [senderId, receiverId, fromEmail, toEmail, cc, bcc, subject, body]
   );
   return result;
 };
@@ -1069,14 +1150,19 @@ export const updateDraft = async (
   userId,
   receiverId,
   toEmail,
+  cc,
+  bcc,
   subject,
   body
 ) => {
   const [result] = await db.query(
     `UPDATE mails
-     SET receiver_user_id = ?, to_email = ?, subject = ?, body = ?
-     WHERE id = ? AND sender_user_id = ? AND status = 'draft'`,
-    [receiverId, toEmail, subject, body, mailId, userId]
+     SET receiver_user_id = ?, to_email = ?, cc = ?, bcc = ?, subject = ?, body = ?
+     WHERE id = ?
+       AND sender_user_id = ?
+       AND status = 'draft'
+       AND gmail_delivery_status <> 'pending'`,
+    [receiverId, toEmail, cc, bcc, subject, body, mailId, userId]
   );
   return result;
 };
@@ -1098,20 +1184,89 @@ export const getDraftMails = async (userId, limit, offset) => {
 };
 
 export const deleteDraft = async (mailId, userId) => {
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [draftRows] = await connection.query(
+      `SELECT id FROM mails
+       WHERE id = ?
+         AND sender_user_id = ?
+         AND status = 'draft'
+         AND gmail_delivery_status <> 'pending'
+       FOR UPDATE`,
+      [mailId, userId]
+    );
+    if (!draftRows[0]) {
+      await connection.rollback();
+      return { affectedRows: 0, attachmentPaths: [] };
+    }
+    const [attachmentRows] = await connection.query(
+      `SELECT file_path FROM attachments WHERE mail_id = ?`,
+      [mailId]
+    );
+    await connection.query(`DELETE FROM attachments WHERE mail_id = ?`, [mailId]);
+    const [result] = await connection.query(
+      `DELETE FROM mails WHERE id = ? AND sender_user_id = ? AND status = 'draft'`,
+      [mailId, userId]
+    );
+    await connection.commit();
+    return {
+      ...result,
+      attachmentPaths: attachmentRows.map((row) => row.file_path),
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+export const claimDraftForSend = async (mailId, userId) => {
   const [result] = await db.query(
-    `DELETE FROM mails WHERE id = ? AND sender_user_id = ? AND status = 'draft'`,
+    `UPDATE mails
+     SET gmail_delivery_status = 'pending',
+         gmail_delivery_error_code = NULL,
+         gmail_delivery_error_message = NULL,
+         gmail_delivery_updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+       AND sender_user_id = ?
+       AND status = 'draft'
+       AND gmail_delivery_status <> 'pending'`,
     [mailId, userId]
   );
   return result;
 };
 
-export const sendDraft = async (mailId, userId) => {
+export const finalizeDraftSend = async ({
+  mailId,
+  userId,
+  receiverId,
+  toEmail,
+  cc,
+  bcc,
+  recipients,
+  gmailDeliveryStatus,
+  gmailMessageId = null,
+  gmailThreadId = null,
+}) => {
+  validateRecipientRows(recipients);
+  if (recipients.some(({ userId: recipientUserId }) =>
+    String(recipientUserId) === String(userId))) {
+    throw new Error("Sender cannot also be a mail recipient");
+  }
+  if (!["internal_only", "sent"].includes(gmailDeliveryStatus)) {
+    throw new Error("Invalid completed Gmail delivery status");
+  }
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
     const [rows] = await connection.query(
       `SELECT * FROM mails
-       WHERE id = ? AND sender_user_id = ? AND status = 'draft'
+       WHERE id = ?
+         AND sender_user_id = ?
+         AND status = 'draft'
+         AND gmail_delivery_status = 'pending'
        FOR UPDATE`,
       [mailId, userId]
     );
@@ -1120,20 +1275,40 @@ export const sendDraft = async (mailId, userId) => {
       await connection.rollback();
       return { status: "not_found" };
     }
-    if (!draft.receiver_user_id || !draft.to_email || !draft.subject || !draft.body) {
-      await connection.rollback();
-      return { status: "incomplete" };
-    }
 
     await connection.query(
-      `UPDATE mails SET status = 'sent', scheduled_at = NULL WHERE id = ?`,
-      [mailId]
+      `UPDATE mails
+       SET receiver_user_id = ?,
+           to_email = ?,
+           cc = ?,
+           bcc = ?,
+           status = 'sent',
+           scheduled_at = NULL,
+           gmail_delivery_status = ?,
+           gmail_message_id = ?,
+           gmail_thread_id = ?,
+           gmail_delivery_error_code = NULL,
+           gmail_delivery_error_message = NULL,
+           gmail_delivery_updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND sender_user_id = ? AND status = 'draft'`,
+      [
+        receiverId,
+        toEmail,
+        cc,
+        bcc,
+        gmailDeliveryStatus,
+        gmailMessageId,
+        gmailThreadId,
+        mailId,
+        userId,
+      ]
     );
-    await insertStateRows(
+    await createMailRecipients(connection, mailId, recipients);
+    await insertMultiRecipientStateRows(
       connection,
       mailId,
       draft.sender_user_id,
-      draft.receiver_user_id
+      recipients
     );
     await connection.commit();
     return { status: "sent", mailId };

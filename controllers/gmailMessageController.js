@@ -9,7 +9,13 @@ import {
   GmailSyncError,
   runGmailSync,
 } from "../services/gmailSyncService.js";
+import { triggerImmediateGmailSync } from "../services/gmailImmediateSyncService.js";
 import { GmailConnectionError } from "../services/gmailClientService.js";
+import {
+  buildInlineContentDisposition,
+  getGmailAttachmentContent,
+  GmailAttachmentError,
+} from "../services/gmailAttachmentService.js";
 import {
   archiveGmailMessage,
   forwardGmailMessage,
@@ -58,6 +64,47 @@ const handleGmailActionError = (error, res) => {
   }
   throw error;
 };
+
+export const createGetGmailAttachmentController = ({
+  getAttachment = getGmailAttachmentContent,
+} = {}) => expressAsyncHandler(async (req, res) => {
+  if (!req.user?.id) {
+    return res.status(401).json({ message: "Authentication required" });
+  }
+
+  try {
+    const attachment = await getAttachment({
+      gmailMessageId: req.params.gmailMessageId,
+      gmailAttachmentId: req.params.gmailAttachmentId,
+      userId: req.user.id,
+    });
+    res.setHeader("Content-Type", attachment.contentType);
+    res.setHeader(
+      "Content-Disposition",
+      buildInlineContentDisposition(attachment.filename)
+    );
+    res.setHeader("Content-Length", attachment.buffer.length);
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.status(200).send(attachment.buffer);
+  } catch (error) {
+    if (error instanceof GmailConnectionError) {
+      return res.status(409).json({
+        code: error.code,
+        message: error.message,
+        reconnectRequired: true,
+      });
+    }
+    if (error instanceof GmailAttachmentError) {
+      return res.status(error.statusCode).json({
+        code: error.code,
+        message: error.message,
+      });
+    }
+    throw error;
+  }
+});
+
+export const getGmailAttachment = createGetGmailAttachmentController();
 
 export const listCachedGmailMessages = expressAsyncHandler(async (req, res) => {
   let result;
@@ -168,6 +215,7 @@ export const replyGmailMessage = expressAsyncHandler(async (req, res) => {
       gmailMessageId,
       userId: req.user.id,
       body: req.body.body,
+      onSent: triggerImmediateGmailSync,
     });
     return res.status(201).json({ message: "Gmail reply sent successfully", ...result });
   } catch (error) {
@@ -183,6 +231,7 @@ export const replyAllGmailMessage = expressAsyncHandler(async (req, res) => {
       gmailMessageId,
       userId: req.user.id,
       body: req.body.body,
+      onSent: triggerImmediateGmailSync,
     });
     return res.status(201).json({ message: "Gmail Reply All sent successfully", ...result });
   } catch (error) {
@@ -199,6 +248,7 @@ export const forwardGmailMessageController = expressAsyncHandler(async (req, res
       userId: req.user.id,
       to: req.body.to,
       body: req.body.body,
+      onSent: triggerImmediateGmailSync,
     });
     return res.status(201).json({ message: "Gmail message forwarded successfully", ...result });
   } catch (error) {

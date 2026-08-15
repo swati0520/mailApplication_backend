@@ -99,6 +99,35 @@ const buildRawMessage = ({ to, cc = [], subject, body, inReplyTo }) => {
   return Buffer.from(mime, "utf8").toString("base64url");
 };
 
+const cleanReplyBody = (body) => {
+  const lines = String(body).replace(/\r\n?/g, "\n").trim().split("\n");
+  const quotedHeaderIndex = lines.findIndex((line) =>
+    /^\s*On\s+.+\s+wrote:\s*$/i.test(line) ||
+    /^\s*-{2,}\s*Original Message\s*-{2,}\s*$/i.test(line)
+  );
+  if (quotedHeaderIndex >= 0) {
+    return lines.slice(0, quotedHeaderIndex).join("\n").trim();
+  }
+
+  const firstQuotedLine = lines.findIndex((line) => /^\s*>/.test(line));
+  if (
+    firstQuotedLine > 0 &&
+    lines.slice(firstQuotedLine).every((line) => !line.trim() || /^\s*>/.test(line))
+  ) {
+    return lines.slice(0, firstQuotedLine).join("\n").trim();
+  }
+  return lines.join("\n").trim();
+};
+
+const runAfterSuccessfulSend = async (onSent, details) => {
+  if (typeof onSent !== "function") return;
+  try {
+    await onSent(details);
+  } catch {
+    // Cache refresh is best-effort and must not turn a successful Gmail send into a failure.
+  }
+};
+
 const deduplicateEmails = (emails, excludedEmail) => {
   const excluded = excludedEmail?.toLowerCase();
   const seen = new Set();
@@ -147,8 +176,10 @@ const sendReply = async ({
   replyAll,
   findMessage = findGmailMessageForUser,
   getGmailClient = getAuthenticatedGmailClient,
+  onSent,
 }) => {
-  if (typeof body !== "string" || !body.trim()) {
+  const cleanedBody = typeof body === "string" ? cleanReplyBody(body) : "";
+  if (!cleanedBody) {
     throw new GmailMessageActionError(
       "gmail_reply_body_required",
       "Reply body is required"
@@ -176,10 +207,14 @@ const sendReply = async ({
         to,
         cc,
         subject: message.subject || "(No subject)",
-        body: body.trim(),
+        body: cleanedBody,
         inReplyTo: normalizeHeader(message.rfc_message_id),
       }),
     },
+  });
+  await runAfterSuccessfulSend(onSent, {
+    senderUserId: userId,
+    recipientEmails: [...to, ...cc],
   });
   return { gmailMessageId: data.id, gmailThreadId: data.threadId };
 };
@@ -303,6 +338,7 @@ export const forwardGmailMessage = async ({
   body = "",
   findMessage = findGmailMessageForUser,
   getGmailClient = getAuthenticatedGmailClient,
+  onSent,
 }) => {
   const destination = typeof to === "string" ? to.trim().toLowerCase() : "";
   if (!validator.isEmail(destination)) {
@@ -339,6 +375,10 @@ export const forwardGmailMessage = async ({
     requestBody: {
       raw: buildRawMessage({ to: [destination], subject, body: forwardedBody }),
     },
+  });
+  await runAfterSuccessfulSend(onSent, {
+    senderUserId: userId,
+    recipientEmails: [destination],
   });
   return { gmailMessageId: data.id, gmailThreadId: data.threadId };
 };

@@ -208,6 +208,30 @@ export const listConnectedGmailUsers = async () => {
   return rows.map((row) => ({ userId: row.user_id }));
 };
 
+export const findConnectedGmailUsersByEmails = async (emails) => {
+  const normalizedEmails = [...new Set(
+    (Array.isArray(emails) ? emails : [])
+      .map((email) => typeof email === "string" ? email.trim().toLowerCase() : "")
+      .filter(Boolean)
+  )];
+  if (!normalizedEmails.length) return [];
+
+  const placeholders = normalizedEmails.map(() => "?").join(", ");
+  const [rows] = await db.query(
+    `SELECT user_id, gmail_email
+     FROM gmail_connections
+     WHERE connection_status = 'connected'
+       AND encrypted_refresh_token IS NOT NULL
+       AND LOWER(gmail_email) IN (${placeholders})
+     ORDER BY user_id`,
+    normalizedEmails
+  );
+  return rows.map((row) => ({
+    userId: row.user_id,
+    gmailEmail: row.gmail_email,
+  }));
+};
+
 export const markGmailConnectionError = async (userId) => {
   const [result] = await db.query(
     `UPDATE gmail_connections

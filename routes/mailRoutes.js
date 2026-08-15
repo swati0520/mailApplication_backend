@@ -9,6 +9,7 @@ import {
   forwardMail,
   getAllMail,
   getArchivedMail,
+  getDraftMail,
   getImportantMail,
   getMailDetails,
   getReceivedMail,
@@ -69,7 +70,9 @@ router.get("/trash", checkToken, getTrashMail);
 router.get("/search", checkToken, searchMail);
 
 router.post("/draft", checkToken, createDraftMail);
+router.get("/draft", checkToken, listDraftMails);
 router.get("/drafts", checkToken, listDraftMails);
+router.get("/draft/:mailId", checkToken, getDraftMail);
 router.put("/draft/:mailId", checkToken, updateDraftMail);
 router.delete("/draft/:mailId", checkToken, removeDraftMail);
 router.post("/draft/:mailId/send", checkToken, sendDraftMail);

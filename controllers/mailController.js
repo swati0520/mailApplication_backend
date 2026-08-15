@@ -1,23 +1,18 @@
 import expressAsyncHandler from "express-async-handler";
 import {
   cancelScheduledMail,
-  createDraft,
   createMail,
   createReplyAllMail,
   createScheduledMail,
-  deleteDraft,
   deleteReceivedMailQuery,
   deleteSentMailQuery,
   emptyTrashForUser,
   findMailById,
   findMailForUser,
-  findOwnedDraft,
   findOwnedScheduledMail,
   getAllMails,
-  getDraftMails,
   getMailRecipients,
   getScheduledMails,
-  getSentMails,
   getSnoozedMails,
   getStateFolderMails,
   getTrashMails,
@@ -35,11 +30,10 @@ import {
   permanentlyDeleteMailCopy,
   restoreMailCopy,
   searchMails,
-  sendDraft,
   setMailThreadId,
   snoozeMailState,
   unsnoozeMailState,
-  updateDraft,
+  updateMailGmailDelivery,
   updateScheduledMail,
 } from "../models/Mail.js";
 import { findUserByEmail, findUserById } from "../models/User.js";
@@ -47,8 +41,23 @@ import { findGmailMessageForUser } from "../models/GmailMessage.js";
 import {
   adaptGmailInboxMessage,
   getCombinedInbox,
+  getCombinedSent,
   parseGmailSourceMessageId,
 } from "../services/mailInboxService.js";
+import {
+  GmailComposeDeliveryError,
+  sendNewGmailMessage,
+} from "../services/gmailComposeDeliveryService.js";
+import { triggerImmediateGmailSync } from "../services/gmailImmediateSyncService.js";
+import {
+  createDraft as createDraftService,
+  deleteDraft as deleteDraftService,
+  DraftServiceError,
+  getDraftById as getDraftByIdService,
+  getDrafts as getDraftsService,
+  sendDraft as sendDraftService,
+  updateDraft as updateDraftService,
+} from "../services/draftService.js";
 import {
   cleanupAttachmentFiles,
   persistAttachmentFile,
@@ -269,12 +278,13 @@ export const sendMail = expressAsyncHandler(async (req, res) => {
     .map((recipient) => recipient.email);
 
   const storedAttachments = [];
+  let data;
   try {
     for (const file of req.files ?? []) {
       storedAttachments.push(await persistAttachmentFile(file));
     }
 
-    const data = await createMail(
+    data = await createMail(
       user.id,
       primaryTo.userId,
       senderEmail,
@@ -286,26 +296,111 @@ export const sendMail = expressAsyncHandler(async (req, res) => {
       "sent",
       null,
       recipients,
-      storedAttachments
+      storedAttachments,
+      "pending"
     );
-    return res.status(201).json({
-      message: "Email sent successfully",
-      mail: data,
-      attachmentCount: storedAttachments.length,
-    });
   } catch (error) {
     await cleanupAttachmentFiles(storedAttachments);
     throw error;
   }
+
+  const mailId = data.insertId;
+  const recipientEmails = (recipientType) =>
+    recipients
+      .filter((recipient) => recipient.recipientType === recipientType)
+      .map((recipient) => recipient.email);
+
+  try {
+    const delivery = await sendNewGmailMessage({
+      userId: user.id,
+      to: recipientEmails("to"),
+      cc: recipientEmails("cc"),
+      bcc: recipientEmails("bcc"),
+      subject: subject.trim(),
+      body: body.trim(),
+      attachments: req.files ?? [],
+    });
+
+    const updateResult = await updateMailGmailDelivery({
+      mailId,
+      senderUserId: user.id,
+      deliveryStatus: delivery.deliveryStatus,
+      gmailMessageId: delivery.gmailMessageId ?? null,
+      gmailThreadId: delivery.gmailThreadId ?? null,
+    });
+    if (updateResult.affectedRows === 0) {
+      throw new Error("Created mail could not be updated by its sender");
+    }
+
+    if (delivery.deliveryStatus === "internal_only") {
+      return res.status(201).json({
+        message: "Mail delivered within the application; Gmail is not connected",
+        mail: data,
+        mailId,
+        deliveryStatus: "internal_only",
+        attachmentCount: storedAttachments.length,
+      });
+    }
+
+    try {
+      await triggerImmediateGmailSync({
+        senderUserId: user.id,
+        recipientEmails: recipients.map((recipient) => recipient.email),
+      });
+    } catch {
+      // Gmail delivery succeeded; cache refresh must not change the send result.
+    }
+
+    return res.status(201).json({
+      message: "Email sent successfully",
+      mail: data,
+      mailId,
+      deliveryStatus: "sent",
+      gmailMessageId: delivery.gmailMessageId,
+      gmailThreadId: delivery.gmailThreadId,
+      attachmentCount: storedAttachments.length,
+    });
+  } catch (error) {
+    const deliveryError = error instanceof GmailComposeDeliveryError
+      ? error
+      : new GmailComposeDeliveryError(
+          "gmail_delivery_state_update_failed",
+          "Gmail delivery state could not be confirmed; do not resend automatically",
+          500,
+          "pending",
+          error
+        );
+
+    if (deliveryError.code !== "gmail_delivery_state_update_failed") {
+      const updateResult = await updateMailGmailDelivery({
+        mailId,
+        senderUserId: user.id,
+        deliveryStatus: deliveryError.deliveryStatus,
+        errorCode: deliveryError.code,
+        errorMessage: deliveryError.message,
+      });
+      if (updateResult.affectedRows === 0) {
+        throw new Error("Created mail could not be updated by its sender");
+      }
+    }
+
+    return res.status(deliveryError.statusCode).json({
+      message: deliveryError.message,
+      mailId,
+      deliveryStatus: deliveryError.deliveryStatus,
+      errorCode: deliveryError.code,
+      attachmentCount: storedAttachments.length,
+    });
+  }
 });
 
 export const getSentMail = expressAsyncHandler(async (req, res) => {
-  const { page, limit, offset } = getPagination(req);
-  const { mails, totalMails } = await getSentMails(
-    req.user.id,
+  const { page, limit } = getPagination(req);
+  const { mails, totalMails } = await getCombinedSent({
+    userId: req.user.id,
+    page,
     limit,
-    offset
-  );
+  });
   return res.status(200).json({
     sentMails: mails,
     pagination: paginationResponse(page, limit, totalMails),
@@ -567,68 +662,107 @@ export const unsnoozeMail = expressAsyncHandler(async (req, res) => {
 });
 
 export const createDraftMail = expressAsyncHandler(async (req, res) => {
-  const user = await getCurrentUser(req, res);
-  if (!user) return;
-  const to = typeof req.body.to === "string" ? req.body.to.trim().toLowerCase() : "";
-  const recipient = to ? await getRecipient(to) : null;
-  if (to && !recipient) return res.status(404).json({ message: "Receiver user not found" });
-  const result = await createDraft(
-    user.id,
-    recipient?.id ?? null,
-    user.email,
-    recipient?.email ?? "",
-    typeof req.body.subject === "string" ? req.body.subject.trim() : "",
-    typeof req.body.body === "string" ? req.body.body.trim() : ""
-  );
-  return res.status(201).json({ message: "Draft created successfully", draftId: result.insertId });
+  try {
+    const draft = await createDraftService({
+      userId: req.user.id,
+      data: req.body,
+    });
+    return res.status(201).json({
+      message: "Draft created successfully",
+      draftId: draft.id,
+      draft,
+    });
+  } catch (error) {
+    if (error instanceof DraftServiceError) {
+      return res.status(error.statusCode).json({ code: error.code, message: error.message });
+    }
+    throw error;
+  }
 });
 
 export const updateDraftMail = expressAsyncHandler(async (req, res) => {
-  const draft = await findOwnedDraft(req.params.mailId, req.user.id);
-  if (!draft) return res.status(404).json({ message: "Draft not found" });
-
-  let recipientId = draft.receiver_user_id;
-  let toEmail = draft.to_email;
-  if (req.body.to !== undefined) {
-    const to = typeof req.body.to === "string" ? req.body.to.trim().toLowerCase() : "";
-    const recipient = to ? await getRecipient(to) : null;
-    if (to && !recipient) return res.status(404).json({ message: "Receiver user not found" });
-    recipientId = recipient?.id ?? null;
-    toEmail = recipient?.email ?? "";
+  try {
+    const draft = await updateDraftService({
+      draftId: req.params.id ?? req.params.mailId,
+      userId: req.user.id,
+      data: req.body,
+    });
+    return res.status(200).json({ message: "Draft updated successfully", draft });
+  } catch (error) {
+    if (error instanceof DraftServiceError) {
+      return res.status(error.statusCode).json({ code: error.code, message: error.message });
+    }
+    throw error;
   }
-
-  await updateDraft(
-    draft.id,
-    req.user.id,
-    recipientId,
-    toEmail,
-    req.body.subject !== undefined ? String(req.body.subject).trim() : draft.subject,
-    req.body.body !== undefined ? String(req.body.body).trim() : draft.body
-  );
-  const updatedDraft = await findOwnedDraft(draft.id, req.user.id);
-  return res.status(200).json({ message: "Draft updated successfully", draft: updatedDraft });
 });
 
 export const listDraftMails = expressAsyncHandler(async (req, res) => {
   const { page, limit, offset } = getPagination(req);
-  const { mails, totalMails } = await getDraftMails(req.user.id, limit, offset);
+  const { drafts, totalDrafts } = await getDraftsService({
+    userId: req.user.id,
+    limit,
+    offset,
+  });
   return res.status(200).json({
-    drafts: mails,
-    pagination: paginationResponse(page, limit, totalMails),
+    drafts,
+    pagination: paginationResponse(page, limit, totalDrafts),
   });
 });
 
+export const getDraftMail = expressAsyncHandler(async (req, res) => {
+  try {
+    const draft = await getDraftByIdService({
+      draftId: req.params.id ?? req.params.mailId,
+      userId: req.user.id,
+    });
+    return res.status(200).json({ draft });
+  } catch (error) {
+    if (error instanceof DraftServiceError) {
+      return res.status(error.statusCode).json({ code: error.code, message: error.message });
+    }
+    throw error;
+  }
+});
+
 export const removeDraftMail = expressAsyncHandler(async (req, res) => {
-  const result = await deleteDraft(req.params.mailId, req.user.id);
-  if (result.affectedRows === 0) return res.status(404).json({ message: "Draft not found" });
-  return res.status(200).json({ message: "Draft deleted successfully" });
+  try {
+    const result = await deleteDraftService({
+      draftId: req.params.id ?? req.params.mailId,
+      userId: req.user.id,
+    });
+    return res.status(200).json({ message: "Draft deleted successfully", ...result });
+  } catch (error) {
+    if (error instanceof DraftServiceError) {
+      return res.status(error.statusCode).json({ code: error.code, message: error.message });
+    }
+    throw error;
+  }
 });
 
 export const sendDraftMail = expressAsyncHandler(async (req, res) => {
-  const result = await sendDraft(req.params.mailId, req.user.id);
-  if (result.status === "not_found") return res.status(404).json({ message: "Draft not found" });
-  if (result.status === "incomplete") return res.status(400).json({ message: "Draft requires receiver, subject, and body" });
-  return res.status(200).json({ message: "Draft sent successfully", mailId: result.mailId });
+  try {
+    const result = await sendDraftService({
+      draftId: req.params.id ?? req.params.mailId,
+      userId: req.user.id,
+    });
+    return res.status(200).json({ message: "Draft sent successfully", ...result });
+  } catch (error) {
+    if (error instanceof DraftServiceError) {
+      return res.status(error.statusCode).json({
+        code: error.code,
+        message: error.message,
+        deliveryStatus: error.deliveryStatus,
+      });
+    }
+    if (error instanceof GmailComposeDeliveryError) {
+      return res.status(error.statusCode).json({
+        code: error.code,
+        message: error.message,
+        deliveryStatus: error.deliveryStatus,
+      });
+    }
+    throw error;
+  }
 });
 
 const validateScheduledAt = (value) => {

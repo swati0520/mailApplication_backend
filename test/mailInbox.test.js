@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import {
   adaptGmailInboxMessage,
   getCombinedInbox,
+  getCombinedSent,
   parseGmailSourceMessageId,
 } from "../services/mailInboxService.js";
 
@@ -68,6 +69,47 @@ describe("combined existing Inbox", () => {
       [
         { id: 2, source: "internal" },
         { id: "gmail:g-1", source: "gmail" },
+      ]
+    );
+  });
+});
+
+describe("combined Sent mailbox", () => {
+  test("includes the authenticated user's synced Gmail replies with internal sent mail", async () => {
+    const result = await getCombinedSent({
+      userId: 42,
+      page: 1,
+      limit: 10,
+      getInternalSent: async (userId, limit, offset) => {
+        assert.deepEqual([userId, limit, offset], [42, 10, 0]);
+        return {
+          totalMails: 1,
+          mails: [{ id: 7, created_at: "2026-08-15T09:00:00Z", mailbox_role: "sender" }],
+        };
+      },
+      getGmailSent: async (userId, limit, offset) => {
+        assert.deepEqual([userId, limit, offset], [42, 10, 0]);
+        return {
+          totalMails: 1,
+          messages: [{
+            gmail_message_id: "gmail-reply-1",
+            internal_date: "2026-08-15T10:00:00Z",
+            label_ids: '["SENT"]',
+          }],
+        };
+      },
+    });
+
+    assert.equal(result.totalMails, 2);
+    assert.deepEqual(
+      result.mails.map(({ id, source, mailbox_role: mailboxRole }) => ({
+        id,
+        source,
+        mailboxRole,
+      })),
+      [
+        { id: "gmail:gmail-reply-1", source: "gmail", mailboxRole: "sender" },
+        { id: 7, source: "internal", mailboxRole: "sender" },
       ]
     );
   });

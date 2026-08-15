@@ -14,6 +14,40 @@ export const createNotifications = async (
   return result;
 };
 
+export const createIncomingNotification = async ({
+  connection = db,
+  userId,
+  mailId = null,
+  sourceKey,
+  title,
+  message,
+}) => {
+  const [existingRows] = await connection.query(
+    `SELECT id
+     FROM notifications
+     WHERE user_id = ? AND source_key = ?
+     LIMIT 1`,
+    [userId, sourceKey]
+  );
+  if (existingRows[0]) return null;
+
+  const [result] = await connection.query(
+    `INSERT INTO notifications
+       (user_id, mail_id, source_key, title, message)
+     VALUES (?, ?, ?, ?, ?)`,
+    [userId, mailId, sourceKey, title, message]
+  );
+
+  return {
+    id: result.insertId,
+    userId,
+    mailId,
+    title,
+    message,
+    isRead: false,
+  };
+};
+
 export const getNotifications = async (userId) => {
   const [rows] = await db.query(
     `SELECT id, mail_id, title, message, is_read

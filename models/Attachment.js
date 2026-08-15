@@ -7,6 +7,7 @@ export const getAttachmentMailAccess = async (mailId, userId) => {
        mails.sender_user_id,
        mails.receiver_user_id,
        mails.status,
+       mails.gmail_delivery_status,
        state.mailbox_role,
        state.is_deleted,
        state.is_permanently_deleted,
@@ -42,6 +43,13 @@ export const getAttachmentMailAccess = async (mailId, userId) => {
     mail.mailbox_role &&
     !mail.is_deleted &&
     !mail.is_permanently_deleted;
+  if (
+    isSender &&
+    mail.status === "draft" &&
+    mail.gmail_delivery_status !== "pending"
+  ) {
+    return { status: "allowed", mail };
+  }
   if (!activeState) return { status: "not_found" };
 
   return { status: "allowed", mail };
@@ -88,6 +96,17 @@ export const createAttachmentRows = async (
 export const getAttachments = async (mailId) => {
   const [rows] = await db.query(
     `SELECT id, mail_id, file_name, file_size, file_type, created_at, updated_at
+     FROM attachments
+     WHERE mail_id = ?
+     ORDER BY created_at, id`,
+    [mailId]
+  );
+  return rows;
+};
+
+export const getAttachmentFilesForMail = async (mailId) => {
+  const [rows] = await db.query(
+    `SELECT id, mail_id, file_name, file_path, file_size, file_type
      FROM attachments
      WHERE mail_id = ?
      ORDER BY created_at, id`,

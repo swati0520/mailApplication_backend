@@ -11,6 +11,7 @@ import {
   deleteGmailMessage,
   forwardGmailMessageController,
   getCachedGmailMessage,
+  getGmailAttachment,
   getGmailSyncStatus,
   importantGmailMessage,
   listCachedGmailMessages,
@@ -33,6 +34,11 @@ router.get("/connect", checkToken, connectGmail);
 router.get("/callback", checkToken, gmailOAuthCallback);
 router.get("/status", checkToken, getGmailConnectionStatus);
 router.get("/messages", checkToken, listCachedGmailMessages);
+router.get(
+  "/messages/:gmailMessageId/attachments/:gmailAttachmentId",
+  checkToken,
+  getGmailAttachment
+);
 router.delete("/messages/:gmailMessageId", checkToken, deleteGmailMessage);
 router.patch("/messages/:gmailMessageId/archive", checkToken, archiveGmailMessageController);
 router.patch("/messages/:gmailMessageId/unarchive", checkToken, unarchiveGmailMessageController);

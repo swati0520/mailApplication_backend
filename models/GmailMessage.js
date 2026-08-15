@@ -1,4 +1,8 @@
 import db from "../config/db.js";
+import {
+  createGmailIncomingNotifications,
+  emitNewNotifications,
+} from "../services/incomingMailNotificationService.js";
 
 const MESSAGE_SELECT = `
   messages.id,
@@ -118,6 +122,50 @@ export const getGmailInboxMessagesForUser = async (
   };
 };
 
+export const getGmailSentMessagesForUser = async (
+  userId,
+  limit,
+  offset
+) => {
+  const sentConditions = `
+    connections.user_id = ?
+    AND connections.connection_status = 'connected'
+    AND messages.remote_deleted = FALSE
+    AND JSON_CONTAINS(messages.label_ids, '"SENT"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM mails internal_mail
+      WHERE internal_mail.sender_user_id = connections.user_id
+        AND internal_mail.gmail_message_id = messages.gmail_message_id
+    )`;
+
+  const [rows] = await db.query(
+    `SELECT ${MESSAGE_SELECT}
+     FROM gmail_messages messages
+     INNER JOIN gmail_connections connections
+       ON connections.id = messages.gmail_connection_id
+     WHERE ${sentConditions}
+     ORDER BY messages.internal_date DESC, messages.id DESC
+     LIMIT ? OFFSET ?`,
+    [userId, limit, offset]
+  );
+
+  const [countRows] = await db.query(
+    `SELECT COUNT(*) AS totalMails
+     FROM gmail_messages messages
+     INNER JOIN gmail_connections connections
+       ON connections.id = messages.gmail_connection_id
+     WHERE ${sentConditions}`,
+    [userId]
+  );
+
+  return {
+    messages: rows,
+    totalMails: Number(countRows[0]?.totalMails) || 0,
+  };
+};
+
 export const findGmailMessageForUser = async (gmailMessageId, userId) => {
   const [rows] = await db.query(
     `SELECT ${MESSAGE_SELECT}
@@ -155,6 +203,38 @@ export const findGmailMessageForUser = async (gmailMessageId, userId) => {
   );
 
   return { ...message, recipients, attachments };
+};
+
+export const findGmailAttachmentForUser = async ({
+  gmailMessageId,
+  gmailAttachmentId,
+  userId,
+}) => {
+  const [rows] = await db.query(
+    `SELECT
+       messages.gmail_connection_id,
+       messages.gmail_message_id,
+       attachments.gmail_attachment_id,
+       attachments.mime_part_id,
+       attachments.filename,
+       attachments.mime_type,
+       attachments.size
+     FROM gmail_messages messages
+     INNER JOIN gmail_connections connections
+       ON connections.id = messages.gmail_connection_id
+     LEFT JOIN gmail_attachments attachments
+       ON attachments.gmail_message_record_id = messages.id
+      AND attachments.gmail_attachment_id = ?
+     WHERE messages.gmail_message_id = ?
+       AND connections.user_id = ?
+       AND messages.remote_deleted = FALSE
+     LIMIT 1`,
+    [gmailAttachmentId, gmailMessageId, userId]
+  );
+  const row = rows[0];
+  if (!row) return { status: "message_not_found" };
+  if (!row.gmail_attachment_id) return { status: "attachment_not_found" };
+  return { status: "allowed", attachment: row };
 };
 
 export const updateGmailMessageLabelsForUser = async ({
@@ -220,6 +300,13 @@ export const upsertGmailMessage = async (
   gmailConnectionId,
   message
 ) => {
+  const [existingRows] = await connection.query(
+    `SELECT id
+     FROM gmail_messages
+     WHERE gmail_connection_id = ? AND gmail_message_id = ?
+     LIMIT 1`,
+    [gmailConnectionId, message.gmailMessageId]
+  );
   const [result] = await connection.query(
     `INSERT INTO gmail_messages (
        gmail_connection_id,
@@ -293,7 +380,10 @@ export const upsertGmailMessage = async (
   await insertRecipients(connection, messageRecordId, message.recipients);
   await insertAttachments(connection, messageRecordId, message.attachments);
 
-  return messageRecordId;
+  return {
+    messageRecordId,
+    isNew: !existingRows[0],
+  };
 };
 
 export const persistGmailMessages = async ({
@@ -325,17 +415,49 @@ export const persistGmailChanges = async ({
   deletedMessageIds = [],
 }) => {
   const connection = await db.getConnection();
+  let notifications = [];
   try {
     await connection.beginTransaction();
-    for (const message of messages) {
-      await upsertGmailMessage(connection, gmailConnectionId, message);
+    const [gmailConnectionRows] = await connection.query(
+      `SELECT user_id, gmail_email
+       FROM gmail_connections
+       WHERE id = ?`,
+      [gmailConnectionId]
+    );
+    const gmailConnection = gmailConnectionRows[0];
+    if (!gmailConnection) {
+      throw new Error("Gmail connection not found while persisting messages");
     }
+
+    const insertedMessages = [];
+    for (const message of messages) {
+      const persisted = await upsertGmailMessage(
+        connection,
+        gmailConnectionId,
+        message
+      );
+      if (persisted.isNew) {
+        insertedMessages.push({
+          messageRecordId: persisted.messageRecordId,
+          message,
+        });
+      }
+    }
+    notifications = await createGmailIncomingNotifications({
+      connection,
+      gmailConnectionId,
+      userId: gmailConnection.user_id,
+      gmailEmail: gmailConnection.gmail_email,
+      insertedMessages,
+    });
     await markGmailMessagesRemoteDeleted(
       connection,
       gmailConnectionId,
       [...new Set(deletedMessageIds)]
     );
     await connection.commit();
+    emitNewNotifications(notifications);
+    return { notifications };
   } catch (error) {
     await connection.rollback();
     throw error;

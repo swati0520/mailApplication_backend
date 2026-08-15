@@ -183,16 +183,23 @@ describe("Gmail message actions", () => {
   test("sends a threaded reply with RFC reply headers and the original subject", async () => {
     const { gmail, calls } = createGmail();
     let requiredScopes;
+    let postSendDetails;
 
     await replyToGmailMessage({
       gmailMessageId: originalMessage.gmail_message_id,
       userId: 42,
-      body: "Thanks for the update.",
+      body: [
+        "It's working!",
+        "",
+        "On Sat, 15 Aug 2026 at 09:59, <sender@example.com> wrote:",
+        "> Original message body",
+      ].join("\n"),
       findMessage: async () => originalMessage,
       getGmailClient: async (options) => {
         requiredScopes = options.requiredScopes;
         return { gmail, gmailConnectionId: 9, gmailEmail: "owner@gmail.com" };
       },
+      onSent: async (details) => { postSendDetails = details; },
     });
 
     assert.deepEqual(requiredScopes, [GMAIL_SEND_SCOPE]);
@@ -205,6 +212,12 @@ describe("Gmail message actions", () => {
     assert.match(mime, /^Subject: Project update/m);
     assert.match(mime, /^In-Reply-To: <original@example\.com>/m);
     assert.match(mime, /^References: <original@example\.com>/m);
+    const encodedBody = mime.split("\r\n\r\n")[1].replace(/\r\n/g, "");
+    assert.equal(Buffer.from(encodedBody, "base64").toString("utf8"), "It's working!");
+    assert.deepEqual(postSendDetails, {
+      senderUserId: 42,
+      recipientEmails: ["sender@example.com"],
+    });
   });
 
   test("reply all excludes the connected account", async () => {
@@ -232,6 +245,7 @@ describe("Gmail message actions", () => {
 
   test("forwards the original content to a validated destination", async () => {
     const { gmail, calls } = createGmail();
+    let postSendDetails;
     await forwardGmailMessage({
       gmailMessageId: originalMessage.gmail_message_id,
       userId: 42,
@@ -243,6 +257,7 @@ describe("Gmail message actions", () => {
         gmailConnectionId: 9,
         gmailEmail: "owner@gmail.com",
       }),
+      onSent: async (details) => { postSendDetails = details; },
     });
 
     const request = calls.send[0].requestBody;
@@ -254,5 +269,9 @@ describe("Gmail message actions", () => {
     const body = Buffer.from(encodedBody, "base64").toString("utf8");
     assert.match(body, /For your review\./);
     assert.match(body, /Original message body/);
+    assert.deepEqual(postSendDetails, {
+      senderUserId: 42,
+      recipientEmails: ["destination@example.com"],
+    });
   });
 });

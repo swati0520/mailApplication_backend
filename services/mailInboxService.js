@@ -1,5 +1,8 @@
-import { getGmailInboxMessagesForUser } from "../models/GmailMessage.js";
-import { getInboxMails } from "../models/Mail.js";
+import {
+  getGmailInboxMessagesForUser,
+  getGmailSentMessagesForUser,
+} from "../models/GmailMessage.js";
+import { getInboxMails, getSentMails } from "../models/Mail.js";
 import { adaptGmailMessage } from "../utils/gmailMessageAdapter.js";
 
 export const GMAIL_SOURCE_PREFIX = "gmail:";
@@ -87,5 +90,32 @@ export const getCombinedInbox = async ({
       limit,
     }),
     totalMails,
+  };
+};
+
+export const getCombinedSent = async ({
+  userId,
+  page,
+  limit,
+  getInternalSent = getSentMails,
+  getGmailSent = getGmailSentMessagesForUser,
+}) => {
+  const offset = (page - 1) * limit;
+  const candidateLimit = offset + limit;
+
+  const [internalResult, gmailResult] = await Promise.all([
+    getInternalSent(userId, candidateLimit, 0),
+    getGmailSent(userId, candidateLimit, 0),
+  ]);
+
+  return {
+    mails: mergeInboxMessages({
+      internalMails: internalResult.mails,
+      gmailMessages: gmailResult.messages,
+      offset,
+      limit,
+    }),
+    totalMails:
+      Number(internalResult.totalMails) + Number(gmailResult.totalMails),
   };
 };
