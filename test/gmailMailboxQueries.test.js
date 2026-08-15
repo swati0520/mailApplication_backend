@@ -58,4 +58,28 @@ describe("authenticated cached Gmail mailbox queries", () => {
       /Invalid Gmail mailbox/
     );
   });
+
+  test("defines archived Gmail mail as outside Inbox, Spam, and Trash", async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    try {
+      db.query = async (sql) => {
+        calls.push(sql);
+        return sql.includes("COUNT(*)") ? [[{ totalMails: 0 }]] : [[]];
+      };
+
+      await getGmailMailboxMessagesForUser(42, "archived", 10, 0);
+
+      for (const sql of calls) {
+        assert.ok(sql.includes(`NOT JSON_CONTAINS(messages.label_ids, '"INBOX"')`));
+        assert.ok(sql.includes(`NOT JSON_CONTAINS(messages.label_ids, '"SPAM"')`));
+        assert.ok(sql.includes(`NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`));
+        assert.ok(!sql.includes(`NOT JSON_CONTAINS(messages.label_ids, '"SENT"')`));
+        assert.ok(!sql.includes(`NOT JSON_CONTAINS(messages.label_ids, '"DRAFT"')`));
+      }
+    } finally {
+      db.query = originalQuery;
+    }
+  });
 });

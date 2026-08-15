@@ -140,7 +140,7 @@ describe("Gmail message actions", () => {
   });
 
   const labelActions = [
-    ["archive", archiveGmailMessage, [], ["INBOX"], ["UNREAD"]],
+    ["archive", archiveGmailMessage, [], ["INBOX", "SPAM"], ["UNREAD"]],
     ["unarchive", unarchiveGmailMessage, ["INBOX"], [], ["INBOX", "UNREAD"]],
     ["read", markGmailMessageRead, [], ["UNREAD"], ["INBOX"]],
     ["unread", markGmailMessageUnread, ["UNREAD"], [], ["INBOX", "UNREAD"]],
@@ -179,6 +179,75 @@ describe("Gmail message actions", () => {
       assert.equal(updated.userId, 42);
     });
   }
+
+  test("archives a spam message without moving it back to Inbox", async () => {
+    const spamMessage = {
+      ...originalMessage,
+      label_ids: JSON.stringify(["SPAM", "UNREAD", "IMPORTANT"]),
+    };
+    const { gmail, calls } = createGmail();
+    let updated;
+
+    gmail.users.messages.modify = async (request) => {
+      calls.modify.push(request);
+      return { data: { id: request.id, labelIds: ["UNREAD", "IMPORTANT"] } };
+    };
+
+    await archiveGmailMessage({
+      gmailMessageId: spamMessage.gmail_message_id,
+      userId: 42,
+      findMessage: async () => spamMessage,
+      getGmailClient: async () => ({
+        gmail,
+        gmailConnectionId: 9,
+        gmailEmail: "owner@gmail.com",
+      }),
+      updateLabels: async (value) => { updated = value; },
+    });
+
+    assert.deepEqual(calls.modify[0].requestBody, {
+      addLabelIds: [],
+      removeLabelIds: ["INBOX", "SPAM"],
+    });
+    assert.deepEqual(updated.labelIds.sort(), ["IMPORTANT", "UNREAD"]);
+  });
+
+  test("moves an archived message to spam and persists the remote labels", async () => {
+    const archivedMessage = {
+      ...originalMessage,
+      label_ids: JSON.stringify(["UNREAD", "IMPORTANT"]),
+    };
+    const { gmail, calls } = createGmail();
+    let updated;
+
+    gmail.users.messages.modify = async (request) => {
+      calls.modify.push(request);
+      return {
+        data: {
+          id: request.id,
+          labelIds: ["SPAM", "UNREAD", "IMPORTANT"],
+        },
+      };
+    };
+
+    await markGmailMessageSpam({
+      gmailMessageId: archivedMessage.gmail_message_id,
+      userId: 42,
+      findMessage: async () => archivedMessage,
+      getGmailClient: async () => ({
+        gmail,
+        gmailConnectionId: 9,
+        gmailEmail: "owner@gmail.com",
+      }),
+      updateLabels: async (value) => { updated = value; },
+    });
+
+    assert.deepEqual(calls.modify[0].requestBody, {
+      addLabelIds: ["SPAM"],
+      removeLabelIds: ["INBOX"],
+    });
+    assert.deepEqual(updated.labelIds.sort(), ["IMPORTANT", "SPAM", "UNREAD"]);
+  });
 
   test("sends a threaded reply with RFC reply headers and the original subject", async () => {
     const { gmail, calls } = createGmail();

@@ -116,8 +116,6 @@ const gmailMailboxConditions = Object.freeze({
     AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`,
   archived: `
     NOT JSON_CONTAINS(messages.label_ids, '"INBOX"')
-    AND NOT JSON_CONTAINS(messages.label_ids, '"SENT"')
-    AND NOT JSON_CONTAINS(messages.label_ids, '"DRAFT"')
     AND NOT JSON_CONTAINS(messages.label_ids, '"SPAM"')
     AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`,
   important: `

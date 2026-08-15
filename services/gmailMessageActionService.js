@@ -288,7 +288,10 @@ export const modifyGmailMessageLabels = async ({
 };
 
 export const archiveGmailMessage = (options) =>
-  modifyGmailMessageLabels({ ...options, removeLabelIds: ["INBOX"] });
+  modifyGmailMessageLabels({
+    ...options,
+    removeLabelIds: ["INBOX", "SPAM"],
+  });
 
 export const unarchiveGmailMessage = (options) =>
   modifyGmailMessageLabels({ ...options, addLabelIds: ["INBOX"] });

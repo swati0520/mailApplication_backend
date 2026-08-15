@@ -26,7 +26,10 @@ export const adaptGmailMessage = (message) => {
     is_read: !hasLabel(labelIds, "UNREAD"),
     is_starred: hasLabel(labelIds, "STARRED"),
     is_important: hasLabel(labelIds, "IMPORTANT"),
-    is_archived: !hasLabel(labelIds, "INBOX"),
+    is_archived:
+      !hasLabel(labelIds, "INBOX") &&
+      !hasLabel(labelIds, "SPAM") &&
+      !hasLabel(labelIds, "TRASH"),
     is_spam: hasLabel(labelIds, "SPAM"),
     is_deleted: hasLabel(labelIds, "TRASH"),
     is_snoozed: false,

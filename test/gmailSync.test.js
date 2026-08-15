@@ -111,12 +111,26 @@ describe("Gmail response mapping", () => {
     assert.equal(adapted.is_read, true);
     assert.equal(adapted.is_starred, true);
     assert.equal(adapted.is_important, false);
-    assert.equal(adapted.is_archived, true);
+    assert.equal(adapted.is_archived, false);
     assert.equal(adapted.is_spam, false);
     assert.equal(adapted.is_deleted, true);
     assert.equal(adapted.is_snoozed, false);
     assert.equal(adapted.mailbox_role, "sender");
     assert.equal(adapted.has_attachment, true);
+  });
+
+  test("only classifies Gmail messages outside Inbox, Spam, and Trash as archived", () => {
+    const archived = adaptGmailMessage({
+      gmail_message_id: "archived-message",
+      label_ids: JSON.stringify(["SENT", "STARRED"]),
+    });
+    const spam = adaptGmailMessage({
+      gmail_message_id: "spam-message",
+      label_ids: JSON.stringify(["SPAM"]),
+    });
+
+    assert.equal(archived.is_archived, true);
+    assert.equal(spam.is_archived, false);
   });
 
   test("exposes Gmail To, Cc, and Bcc as display-safe email strings", () => {
