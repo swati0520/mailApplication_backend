@@ -1,8 +1,14 @@
 import {
+  getGmailMailboxMessagesForUser,
   getGmailInboxMessagesForUser,
   getGmailSentMessagesForUser,
 } from "../models/GmailMessage.js";
-import { getInboxMails, getSentMails } from "../models/Mail.js";
+import {
+  getAllMails,
+  getInboxMails,
+  getSentMails,
+  getStateFolderMails,
+} from "../models/Mail.js";
 import { adaptGmailMessage } from "../utils/gmailMessageAdapter.js";
 
 export const GMAIL_SOURCE_PREFIX = "gmail:";
@@ -64,48 +70,18 @@ export const mergeInboxMessages = ({
   .sort(compareInboxMessages)
   .slice(offset, offset + limit);
 
-export const getCombinedInbox = async ({
+const getCombinedMailbox = async ({
   userId,
   page,
   limit,
-  getInternalInbox = getInboxMails,
-  getGmailInbox = getGmailInboxMessagesForUser,
+  getInternalMailbox,
+  getGmailMailbox,
 }) => {
   const offset = (page - 1) * limit;
   const candidateLimit = offset + limit;
-
   const [internalResult, gmailResult] = await Promise.all([
-    getInternalInbox(userId, candidateLimit, 0),
-    getGmailInbox(userId, candidateLimit, 0),
-  ]);
-
-  const totalMails =
-    Number(internalResult.totalMails) + Number(gmailResult.totalMails);
-
-  return {
-    mails: mergeInboxMessages({
-      internalMails: internalResult.mails,
-      gmailMessages: gmailResult.messages,
-      offset,
-      limit,
-    }),
-    totalMails,
-  };
-};
-
-export const getCombinedSent = async ({
-  userId,
-  page,
-  limit,
-  getInternalSent = getSentMails,
-  getGmailSent = getGmailSentMessagesForUser,
-}) => {
-  const offset = (page - 1) * limit;
-  const candidateLimit = offset + limit;
-
-  const [internalResult, gmailResult] = await Promise.all([
-    getInternalSent(userId, candidateLimit, 0),
-    getGmailSent(userId, candidateLimit, 0),
+    getInternalMailbox(userId, candidateLimit, 0),
+    getGmailMailbox(userId, candidateLimit, 0),
   ]);
 
   return {
@@ -119,3 +95,78 @@ export const getCombinedSent = async ({
       Number(internalResult.totalMails) + Number(gmailResult.totalMails),
   };
 };
+
+export const getCombinedInbox = async ({
+  userId,
+  page,
+  limit,
+  getInternalInbox = getInboxMails,
+  getGmailInbox = getGmailInboxMessagesForUser,
+}) => getCombinedMailbox({
+  userId,
+  page,
+  limit,
+  getInternalMailbox: getInternalInbox,
+  getGmailMailbox: getGmailInbox,
+});
+
+export const getCombinedSent = async ({
+  userId,
+  page,
+  limit,
+  getInternalSent = getSentMails,
+  getGmailSent = getGmailSentMessagesForUser,
+}) => getCombinedMailbox({
+  userId,
+  page,
+  limit,
+  getInternalMailbox: getInternalSent,
+  getGmailMailbox: getGmailSent,
+});
+
+export const getCombinedAllMail = ({
+  userId,
+  page,
+  limit,
+  getInternalAll = getAllMails,
+  getGmailAll = (id, count, offset) =>
+    getGmailMailboxMessagesForUser(id, "all", count, offset),
+}) => getCombinedMailbox({
+  userId,
+  page,
+  limit,
+  getInternalMailbox: getInternalAll,
+  getGmailMailbox: getGmailAll,
+});
+
+export const getCombinedStateMailbox = ({
+  userId,
+  page,
+  limit,
+  stateField,
+  gmailMailbox,
+  getInternalState = getStateFolderMails,
+  getGmailState = getGmailMailboxMessagesForUser,
+}) => getCombinedMailbox({
+  userId,
+  page,
+  limit,
+  getInternalMailbox: (id, count, offset) =>
+    getInternalState(id, stateField, count, offset),
+  getGmailMailbox: (id, count, offset) =>
+    getGmailState(id, gmailMailbox, count, offset),
+});
+
+export const getGmailPromotionsMailbox = ({
+  userId,
+  page,
+  limit,
+  getGmailPromotions = getGmailMailboxMessagesForUser,
+}) => getCombinedMailbox({
+  userId,
+  page,
+  limit,
+  getInternalMailbox: async () => ({ mails: [], totalMails: 0 }),
+  getGmailMailbox: (id, count, offset) =>
+    getGmailPromotions(id, "promotions", count, offset),
+});

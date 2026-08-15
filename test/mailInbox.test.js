@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   adaptGmailInboxMessage,
+  getCombinedAllMail,
   getCombinedInbox,
   getCombinedSent,
+  getCombinedStateMailbox,
+  getGmailPromotionsMailbox,
   parseGmailSourceMessageId,
 } from "../services/mailInboxService.js";
 
@@ -112,5 +115,85 @@ describe("combined Sent mailbox", () => {
         { id: 7, source: "internal", mailboxRole: "sender" },
       ]
     );
+  });
+});
+
+describe("combined Gmail mailbox sections", () => {
+  test("All Mail merges internal and Gmail cache results", async () => {
+    const result = await getCombinedAllMail({
+      userId: 42,
+      page: 1,
+      limit: 10,
+      getInternalAll: async () => ({
+        totalMails: 1,
+        mails: [{ id: 8, created_at: "2026-08-15T09:00:00Z" }],
+      }),
+      getGmailAll: async () => ({
+        totalMails: 1,
+        messages: [{
+          gmail_message_id: "gmail-all-1",
+          internal_date: "2026-08-15T10:00:00Z",
+          label_ids: '["INBOX"]',
+        }],
+      }),
+    });
+
+    assert.equal(result.totalMails, 2);
+    assert.deepEqual(result.mails.map(({ id }) => id), ["gmail:gmail-all-1", 8]);
+  });
+
+  test("state folders pass separate internal state and Gmail mailbox filters", async () => {
+    const internalCalls = [];
+    const gmailCalls = [];
+    const result = await getCombinedStateMailbox({
+      userId: 42,
+      page: 1,
+      limit: 10,
+      stateField: "is_starred",
+      gmailMailbox: "starred",
+      getInternalState: async (...args) => {
+        internalCalls.push(args);
+        return { totalMails: 0, mails: [] };
+      },
+      getGmailState: async (...args) => {
+        gmailCalls.push(args);
+        return {
+          totalMails: 1,
+          messages: [{
+            gmail_message_id: "gmail-starred-1",
+            internal_date: "2026-08-15T10:00:00Z",
+            label_ids: '["STARRED"]',
+          }],
+        };
+      },
+    });
+
+    assert.deepEqual(internalCalls, [[42, "is_starred", 10, 0]]);
+    assert.deepEqual(gmailCalls, [[42, "starred", 10, 0]]);
+    assert.equal(result.mails[0].id, "gmail:gmail-starred-1");
+  });
+
+  test("Promotions is Gmail-only and source-qualified", async () => {
+    const calls = [];
+    const result = await getGmailPromotionsMailbox({
+      userId: 42,
+      page: 1,
+      limit: 10,
+      getGmailPromotions: async (...args) => {
+        calls.push(args);
+        return {
+          totalMails: 1,
+          messages: [{
+            gmail_message_id: "promotion-1",
+            internal_date: "2026-08-15T10:00:00Z",
+            label_ids: '["CATEGORY_PROMOTIONS"]',
+          }],
+        };
+      },
+    });
+
+    assert.deepEqual(calls, [[42, "promotions", 10, 0]]);
+    assert.equal(result.totalMails, 1);
+    assert.equal(result.mails[0].source, "gmail");
   });
 });

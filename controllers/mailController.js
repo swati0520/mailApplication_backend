@@ -10,11 +10,9 @@ import {
   findMailById,
   findMailForUser,
   findOwnedScheduledMail,
-  getAllMails,
   getMailRecipients,
   getScheduledMails,
   getSnoozedMails,
-  getStateFolderMails,
   getTrashMails,
   isUserMailRecipient,
   markMailAsArchived,
@@ -40,8 +38,11 @@ import { findUserByEmail, findUserById } from "../models/User.js";
 import { findGmailMessageForUser } from "../models/GmailMessage.js";
 import {
   adaptGmailInboxMessage,
+  getCombinedAllMail,
   getCombinedInbox,
   getCombinedSent,
+  getCombinedStateMailbox,
+  getGmailPromotionsMailbox,
   parseGmailSourceMessageId,
 } from "../services/mailInboxService.js";
 import {
@@ -183,15 +184,16 @@ const getCurrentUser = async (req, res) => {
   return user;
 };
 
-const listStateFolder = (stateField, responseField) =>
+const listStateFolder = (stateField, gmailMailbox, responseField) =>
   expressAsyncHandler(async (req, res) => {
-    const { page, limit, offset } = getPagination(req);
-    const { mails, totalMails } = await getStateFolderMails(
-      req.user.id,
-      stateField,
+    const { page, limit } = getPagination(req);
+    const { mails, totalMails } = await getCombinedStateMailbox({
+      userId: req.user.id,
+      page,
       limit,
-      offset
-    );
+      stateField,
+      gmailMailbox,
+    });
     return res.status(200).json({
       [responseField]: mails,
       pagination: paginationResponse(page, limit, totalMails),
@@ -421,22 +423,35 @@ export const getReceivedMail = expressAsyncHandler(async (req, res) => {
 });
 
 export const getAllMail = expressAsyncHandler(async (req, res) => {
-  const { page, limit, offset } = getPagination(req);
-  const { mails, totalMails } = await getAllMails(
-    req.user.id,
+  const { page, limit } = getPagination(req);
+  const { mails, totalMails } = await getCombinedAllMail({
+    userId: req.user.id,
+    page,
     limit,
-    offset
-  );
+  });
   return res.status(200).json({
     allMails: mails,
     pagination: paginationResponse(page, limit, totalMails),
   });
 });
 
-export const getStarredMail = listStateFolder("is_starred", "starredMails");
-export const getImportantMail = listStateFolder("is_important", "importantMails");
-export const getArchivedMail = listStateFolder("is_archived", "archivedMails");
-export const getSpamMail = listStateFolder("is_spam", "spamMails");
+export const getStarredMail = listStateFolder("is_starred", "starred", "starredMails");
+export const getImportantMail = listStateFolder("is_important", "important", "importantMails");
+export const getArchivedMail = listStateFolder("is_archived", "archived", "archivedMails");
+export const getSpamMail = listStateFolder("is_spam", "spam", "spamMails");
+
+export const getPromotionsMail = expressAsyncHandler(async (req, res) => {
+  const { page, limit } = getPagination(req);
+  const { mails, totalMails } = await getGmailPromotionsMailbox({
+    userId: req.user.id,
+    page,
+    limit,
+  });
+  return res.status(200).json({
+    promotionsMails: mails,
+    pagination: paginationResponse(page, limit, totalMails),
+  });
+});
 
 export const getSnoozedMail = expressAsyncHandler(async (req, res) => {
   const { page, limit, offset } = getPagination(req);

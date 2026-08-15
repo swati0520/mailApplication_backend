@@ -12,6 +12,7 @@ import {
   getDraftMail,
   getImportantMail,
   getMailDetails,
+  getPromotionsMail,
   getReceivedMail,
   getSentMail,
   getSnoozedMail,
@@ -65,6 +66,7 @@ router.get("/starred", checkToken, getStarredMail);
 router.get("/important", checkToken, getImportantMail);
 router.get("/archived", checkToken, getArchivedMail);
 router.get("/spam", checkToken, getSpamMail);
+router.get("/promotions", checkToken, getPromotionsMail);
 router.get("/snoozed", checkToken, getSnoozedMail);
 router.get("/trash", checkToken, getTrashMail);
 router.get("/search", checkToken, searchMail);

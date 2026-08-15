@@ -83,69 +83,74 @@ export const listGmailMessagesForUser = async ({
   };
 };
 
-export const getGmailInboxMessagesForUser = async (
-  userId,
-  limit,
-  offset
-) => {
-  const inboxConditions = `
-    connections.user_id = ?
-    AND connections.connection_status = 'connected'
-    AND messages.remote_deleted = FALSE
-    AND JSON_CONTAINS(messages.label_ids, '"INBOX"')
+const gmailMailboxConditions = Object.freeze({
+  inbox: `
+    JSON_CONTAINS(messages.label_ids, '"INBOX"')
     AND NOT JSON_CONTAINS(messages.label_ids, '"SPAM"')
-    AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`;
-
-  const [rows] = await db.query(
-    `SELECT ${MESSAGE_SELECT}
-     FROM gmail_messages messages
-     INNER JOIN gmail_connections connections
-       ON connections.id = messages.gmail_connection_id
-     WHERE ${inboxConditions}
-     ORDER BY messages.internal_date DESC, messages.id DESC
-     LIMIT ? OFFSET ?`,
-    [userId, limit, offset]
-  );
-
-  const [countRows] = await db.query(
-    `SELECT COUNT(*) AS totalMails
-     FROM gmail_messages messages
-     INNER JOIN gmail_connections connections
-       ON connections.id = messages.gmail_connection_id
-     WHERE ${inboxConditions}`,
-    [userId]
-  );
-
-  return {
-    messages: rows,
-    totalMails: Number(countRows[0]?.totalMails) || 0,
-  };
-};
-
-export const getGmailSentMessagesForUser = async (
-  userId,
-  limit,
-  offset
-) => {
-  const sentConditions = `
-    connections.user_id = ?
-    AND connections.connection_status = 'connected'
-    AND messages.remote_deleted = FALSE
-    AND JSON_CONTAINS(messages.label_ids, '"SENT"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`,
+  all: `
+    NOT JSON_CONTAINS(messages.label_ids, '"SPAM"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"DRAFT"')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM mails internal_mail
+      WHERE internal_mail.sender_user_id = connections.user_id
+        AND internal_mail.gmail_message_id = messages.gmail_message_id
+    )`,
+  sent: `
+    JSON_CONTAINS(messages.label_ids, '"SENT"')
     AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')
     AND NOT EXISTS (
       SELECT 1
       FROM mails internal_mail
       WHERE internal_mail.sender_user_id = connections.user_id
         AND internal_mail.gmail_message_id = messages.gmail_message_id
-    )`;
+    )`,
+  starred: `
+    JSON_CONTAINS(messages.label_ids, '"STARRED"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"SPAM"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`,
+  spam: `
+    JSON_CONTAINS(messages.label_ids, '"SPAM"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`,
+  archived: `
+    NOT JSON_CONTAINS(messages.label_ids, '"INBOX"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"SENT"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"DRAFT"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"SPAM"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`,
+  important: `
+    JSON_CONTAINS(messages.label_ids, '"IMPORTANT"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"SPAM"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`,
+  promotions: `
+    JSON_CONTAINS(messages.label_ids, '"CATEGORY_PROMOTIONS"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"SPAM"')
+    AND NOT JSON_CONTAINS(messages.label_ids, '"TRASH"')`,
+});
+
+export const getGmailMailboxMessagesForUser = async (
+  userId,
+  mailbox,
+  limit,
+  offset
+) => {
+  const mailboxCondition = gmailMailboxConditions[mailbox];
+  if (!mailboxCondition) throw new Error("Invalid Gmail mailbox");
+
+  const conditions = `
+    connections.user_id = ?
+    AND connections.connection_status = 'connected'
+    AND messages.remote_deleted = FALSE
+    AND ${mailboxCondition}`;
 
   const [rows] = await db.query(
     `SELECT ${MESSAGE_SELECT}
      FROM gmail_messages messages
      INNER JOIN gmail_connections connections
        ON connections.id = messages.gmail_connection_id
-     WHERE ${sentConditions}
+     WHERE ${conditions}
      ORDER BY messages.internal_date DESC, messages.id DESC
      LIMIT ? OFFSET ?`,
     [userId, limit, offset]
@@ -156,7 +161,7 @@ export const getGmailSentMessagesForUser = async (
      FROM gmail_messages messages
      INNER JOIN gmail_connections connections
        ON connections.id = messages.gmail_connection_id
-     WHERE ${sentConditions}`,
+     WHERE ${conditions}`,
     [userId]
   );
 
@@ -165,6 +170,12 @@ export const getGmailSentMessagesForUser = async (
     totalMails: Number(countRows[0]?.totalMails) || 0,
   };
 };
+
+export const getGmailInboxMessagesForUser = (userId, limit, offset) =>
+  getGmailMailboxMessagesForUser(userId, "inbox", limit, offset);
+
+export const getGmailSentMessagesForUser = (userId, limit, offset) =>
+  getGmailMailboxMessagesForUser(userId, "sent", limit, offset);
 
 export const findGmailMessageForUser = async (gmailMessageId, userId) => {
   const [rows] = await db.query(
