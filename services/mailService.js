@@ -17,7 +17,7 @@ export const startScheduledMailWorker = () => {
         wakeExpiredSnoozedMails(),
       ]);
     } catch (error) {
-      console.error("Scheduled mail processing failed:", error.message);
+
     } finally {
       isProcessing = false;
     }

@@ -15,7 +15,6 @@ import {
   findOwnedScheduledMail,
   getAllMails,
   getDraftMails,
-  getInboxMails,
   getMailRecipients,
   getScheduledMails,
   getSentMails,
@@ -44,6 +43,12 @@ import {
   updateScheduledMail,
 } from "../models/Mail.js";
 import { findUserByEmail, findUserById } from "../models/User.js";
+import { findGmailMessageForUser } from "../models/GmailMessage.js";
+import {
+  adaptGmailInboxMessage,
+  getCombinedInbox,
+  parseGmailSourceMessageId,
+} from "../services/mailInboxService.js";
 import {
   cleanupAttachmentFiles,
   persistAttachmentFile,
@@ -54,6 +59,8 @@ const getPagination = (req) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
   return { page, limit, offset: (page - 1) * limit };
 };
+
+const GMAIL_MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,255}$/;
 
 const paginationResponse = (page, limit, totalMails) => ({
   page,
@@ -306,12 +313,12 @@ export const getSentMail = expressAsyncHandler(async (req, res) => {
 });
 
 export const getReceivedMail = expressAsyncHandler(async (req, res) => {
-  const { page, limit, offset } = getPagination(req);
-  const { mails, totalMails } = await getInboxMails(
-    req.user.id,
+  const { page, limit } = getPagination(req);
+  const { mails, totalMails } = await getCombinedInbox({
+    userId: req.user.id,
+    page,
     limit,
-    offset
-  );
+  });
   return res.status(200).json({
     receivedMails: mails,
     pagination: paginationResponse(page, limit, totalMails),
@@ -420,6 +427,26 @@ export const emptyTrash = expressAsyncHandler(async (req, res) => {
 });
 
 export const getMailDetails = expressAsyncHandler(async (req, res) => {
+  const gmailMessageId = parseGmailSourceMessageId(req.params.mailId);
+  if (gmailMessageId !== null) {
+    if (!GMAIL_MESSAGE_ID_PATTERN.test(gmailMessageId)) {
+      return res.status(400).json({ message: "Invalid Gmail message ID" });
+    }
+
+    const gmailMessage = await findGmailMessageForUser(
+      gmailMessageId,
+      req.user.id
+    );
+    if (!gmailMessage) {
+      return res.status(404).json({ message: "Mail not found" });
+    }
+
+    return res.status(200).json({
+      message: "Mail fetched successfully",
+      mail: adaptGmailInboxMessage(gmailMessage),
+    });
+  }
+
   const mail = await getAuthorizedMail(req, res);
   if (!mail) return;
   const recipients = await getMailRecipients(req.params.mailId, req.user.id);
