@@ -58,7 +58,10 @@ export const connectGmail = expressAsyncHandler(async (req, res) => {
     }
 
     const { authorizationUrl, stateCookie } =
-      createGmailAuthorizationRequest({ userId: user.id });
+      createGmailAuthorizationRequest({
+        userId: user.id,
+        loginHint: user.email,
+      });
 
     res.cookie(
       GMAIL_OAUTH_STATE_COOKIE,

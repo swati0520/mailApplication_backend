@@ -30,6 +30,7 @@ const requireToken = (value, code, message) => {
 
 export const createGmailAuthorizationRequest = ({
   userId,
+  loginHint,
   oauthClient = createGmailOAuthClient(),
 }) => {
   let state;
@@ -49,6 +50,7 @@ export const createGmailAuthorizationRequest = ({
       prompt: "consent",
       scope: GMAIL_OAUTH_SCOPES,
       state,
+      ...(loginHint ? { login_hint: loginHint.trim().toLowerCase() } : {}),
     });
   } catch (error) {
    

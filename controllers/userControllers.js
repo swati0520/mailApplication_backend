@@ -25,6 +25,7 @@ import {
   deleteFromCloudinary,
   uploadToCloudinary,
 } from "../utils/cloudinaryUpload.js";
+import { findGmailConnectionByUserId } from "../models/GmailConnection.js";
 
 const createAuthToken = (user) => {
   if (!process.env.JWT_SECRET) {
@@ -50,6 +51,13 @@ const serializeUser = (user) => ({
   profilePic: user.profile_pic,
   isGoogleLinked: Boolean(user.google_id),
 });
+
+export const getGoogleLoginRedirect = ({
+  gmailConnection,
+  frontendUrl,
+}) => gmailConnection?.connection_status === "connected"
+  ? `${frontendUrl}/`
+  : "/gmail/connect";
 
 const removeLocalUpload = async (filePath) => {
   if (!filePath) return;
@@ -472,9 +480,11 @@ export const googleLogin = expressAsyncHandler(async (req, res) => {
 
   setAuthCookie(res, token);
 
-  return res.redirect(
-    `${process.env.FRONTEND_URL}/`
-  );
+  const gmailConnection = await findGmailConnectionByUserId(req.user.id);
+  return res.redirect(getGoogleLoginRedirect({
+    gmailConnection,
+    frontendUrl: process.env.FRONTEND_URL,
+  }));
 });
 
 export const googleLoginFailed = expressAsyncHandler(async (req, res) => {

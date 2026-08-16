@@ -50,6 +50,12 @@ import {
   sendNewGmailMessage,
 } from "../services/gmailComposeDeliveryService.js";
 import { triggerImmediateGmailSync } from "../services/gmailImmediateSyncService.js";
+import { GmailConnectionError } from "../services/gmailClientService.js";
+import {
+  GmailMessageActionError,
+  replyAllToGmailMessage,
+  replyToGmailMessage,
+} from "../services/gmailMessageActionService.js";
 import {
   createDraft as createDraftService,
   deleteDraft as deleteDraftService,
@@ -71,6 +77,47 @@ const getPagination = (req) => {
 };
 
 const GMAIL_MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,255}$/;
+
+const handleGmailReplyError = (error, res) => {
+  if (error instanceof GmailConnectionError) {
+    return res.status(409).json({
+      code: error.code,
+      message: error.message,
+      reconnectRequired:
+        error.code === "gmail_scope_missing" ||
+        error.code === "gmail_not_connected",
+    });
+  }
+  if (error instanceof GmailMessageActionError) {
+    return res.status(error.statusCode).json({
+      code: error.code,
+      message: error.message,
+    });
+  }
+  throw error;
+};
+
+const sendGmailReply = async ({ gmailMessageId, userId, body, replyAll }) => {
+  if (!GMAIL_MESSAGE_ID_PATTERN.test(gmailMessageId)) {
+    throw new GmailMessageActionError(
+      "gmail_message_id_invalid",
+      "Invalid Gmail message ID",
+      400
+    );
+  }
+  const action = replyAll ? replyAllToGmailMessage : replyToGmailMessage;
+  return action({
+    gmailMessageId,
+    userId,
+    body,
+    onSent: triggerImmediateGmailSync,
+  });
+};
+
+export const isGmailBackedSentMail = (mail) =>
+  mail.mailbox_role === "sender" &&
+  mail.gmail_delivery_status === "sent" &&
+  Boolean(mail.gmail_message_id);
 
 const paginationResponse = (page, limit, totalMails) => ({
   page,
@@ -854,6 +901,24 @@ export const cancelSchedule = expressAsyncHandler(async (req, res) => {
 });
 
 export const replyToMail = expressAsyncHandler(async (req, res) => {
+  const gmailSourceId = parseGmailSourceMessageId(req.params.mailId);
+  if (gmailSourceId !== null) {
+    try {
+      const delivery = await sendGmailReply({
+        gmailMessageId: gmailSourceId,
+        userId: req.user.id,
+        body: req.body.body,
+        replyAll: false,
+      });
+      return res.status(201).json({
+        message: "Reply sent successfully",
+        ...delivery,
+      });
+    } catch (error) {
+      return handleGmailReplyError(error, res);
+    }
+  }
+
   const original = await getAuthorizedMail(req, res);
   if (!original) return;
   if (!req.body.body?.trim()) return res.status(400).json({ message: "Reply body is required" });
@@ -867,9 +932,22 @@ export const replyToMail = expressAsyncHandler(async (req, res) => {
   if (!recipient) return res.status(404).json({ message: "Reply recipient not found" });
 
   const threadId = original.thread_id || `thread-${original.id}`;
-  if (!original.thread_id) await setMailThreadId(original.id, threadId);
   const subject = req.body.subject?.trim() ||
     (original.subject.startsWith("Re:") ? original.subject : `Re: ${original.subject}`);
+  let gmailDelivery = null;
+  if (isGmailBackedSentMail(original)) {
+    try {
+      gmailDelivery = await sendGmailReply({
+        gmailMessageId: original.gmail_message_id,
+        userId: req.user.id,
+        body: req.body.body,
+        replyAll: false,
+      });
+    } catch (error) {
+      return handleGmailReplyError(error, res);
+    }
+  }
+  if (!original.thread_id) await setMailThreadId(original.id, threadId);
   const result = await createMail(
     currentUser.id,
     recipient.id,
@@ -880,9 +958,23 @@ export const replyToMail = expressAsyncHandler(async (req, res) => {
     subject,
     req.body.body.trim(),
     "sent",
-    threadId
+    threadId,
+    null,
+    [],
+    gmailDelivery ? "sent" : "internal_only",
+    gmailDelivery?.gmailMessageId ?? null,
+    gmailDelivery?.gmailThreadId ?? null
   );
-  return res.status(201).json({ message: "Reply sent successfully", mailId: result.insertId, threadId });
+  return res.status(201).json({
+    message: "Reply sent successfully",
+    mailId: result.insertId,
+    threadId,
+    ...(gmailDelivery && {
+      deliveryStatus: "sent",
+      gmailMessageId: gmailDelivery.gmailMessageId,
+      gmailThreadId: gmailDelivery.gmailThreadId,
+    }),
+  });
 });
 
 export const replyAllToMail = expressAsyncHandler(async (req, res) => {
@@ -890,15 +982,54 @@ export const replyAllToMail = expressAsyncHandler(async (req, res) => {
     return res.status(400).json({ message: "Reply body is required" });
   }
 
+  const gmailSourceId = parseGmailSourceMessageId(req.params.mailId);
+  if (gmailSourceId !== null) {
+    try {
+      const delivery = await sendGmailReply({
+        gmailMessageId: gmailSourceId,
+        userId: req.user.id,
+        body: req.body.body,
+        replyAll: true,
+      });
+      return res.status(201).json({
+        message: "Reply All sent successfully",
+        ...delivery,
+      });
+    } catch (error) {
+      return handleGmailReplyError(error, res);
+    }
+  }
+
   const currentUser = await getCurrentUser(req, res);
   if (!currentUser) return;
+
+  const original = await getAuthorizedMail(req, res);
+  if (!original) return;
+  let gmailDelivery = null;
+  if (isGmailBackedSentMail(original)) {
+    try {
+      gmailDelivery = await sendGmailReply({
+        gmailMessageId: original.gmail_message_id,
+        userId: req.user.id,
+        body: req.body.body,
+        replyAll: true,
+      });
+    } catch (error) {
+      return handleGmailReplyError(error, res);
+    }
+  }
 
   const result = await createReplyAllMail(
     req.params.mailId,
     req.user.id,
     currentUser.email,
     req.body.subject,
-    req.body.body.trim()
+    req.body.body.trim(),
+    gmailDelivery && {
+      deliveryStatus: "sent",
+      gmailMessageId: gmailDelivery.gmailMessageId,
+      gmailThreadId: gmailDelivery.gmailThreadId,
+    }
   );
 
   if (result.status === "forbidden") {
@@ -917,6 +1048,11 @@ export const replyAllToMail = expressAsyncHandler(async (req, res) => {
     message: "Reply All sent successfully",
     mailId: result.mailId,
     threadId: result.threadId,
+    ...(gmailDelivery && {
+      deliveryStatus: "sent",
+      gmailMessageId: gmailDelivery.gmailMessageId,
+      gmailThreadId: gmailDelivery.gmailThreadId,
+    }),
   });
 });
 

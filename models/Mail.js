@@ -331,7 +331,9 @@ export const createMail = async (
   thread_id = null,
   recipients = null,
   attachments = [],
-  gmail_delivery_status = "internal_only"
+  gmail_delivery_status = "internal_only",
+  gmail_message_id = null,
+  gmail_thread_id = null
 ) => {
   if (!allowedGmailDeliveryStatuses.has(gmail_delivery_status)) {
     throw new Error("Invalid Gmail delivery status");
@@ -371,9 +373,11 @@ export const createMail = async (
           body,
           status,
           gmail_delivery_status,
+          gmail_message_id,
+          gmail_thread_id,
           thread_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         sender_user_id,
         receiver_user_id,
@@ -385,6 +389,8 @@ export const createMail = async (
         body,
         status,
         gmail_delivery_status,
+        gmail_message_id,
+        gmail_thread_id,
         thread_id,
       ]
     );
@@ -466,7 +472,8 @@ export const createReplyAllMail = async (
   currentUserId,
   currentUserEmail,
   requestedSubject,
-  body
+  body,
+  gmailDelivery = null
 ) => {
   const connection = await db.getConnection();
   let notifications = [];
@@ -637,9 +644,12 @@ export const createReplyAllMail = async (
           subject,
           body,
           status,
+          gmail_delivery_status,
+          gmail_message_id,
+          gmail_thread_id,
           thread_id
         )
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'sent', ?)`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'sent', ?, ?, ?, ?)`,
       [
         currentUserId,
         primaryTo.userId,
@@ -648,6 +658,9 @@ export const createReplyAllMail = async (
         ccEmails.length ? JSON.stringify(ccEmails) : null,
         subject,
         body,
+        gmailDelivery?.deliveryStatus ?? "internal_only",
+        gmailDelivery?.gmailMessageId ?? null,
+        gmailDelivery?.gmailThreadId ?? null,
         threadId,
       ]
     );

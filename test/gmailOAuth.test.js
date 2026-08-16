@@ -8,6 +8,7 @@ import {
   GMAIL_SEND_SCOPE,
 } from "../config/gmailOAuth.js";
 import { serializeGmailConnectionStatus } from "../controllers/gmailController.js";
+import { getGoogleLoginRedirect } from "../controllers/userControllers.js";
 import checkToken from "../middleware/CheckToken.js";
 import {
   completeGmailOAuthConnection,
@@ -73,6 +74,26 @@ const createOAuthClient = ({
 });
 
 describe("Gmail OAuth authorization", () => {
+  test("continues a new Google user into Gmail consent when no connection exists", () => {
+    assert.equal(
+      getGoogleLoginRedirect({
+        gmailConnection: undefined,
+        frontendUrl: "http://localhost:5173",
+      }),
+      "/gmail/connect"
+    );
+  });
+
+  test("finishes Google login normally when Gmail is already connected", () => {
+    assert.equal(
+      getGoogleLoginRedirect({
+        gmailConnection: { connection_status: "connected" },
+        frontendUrl: "http://localhost:5173",
+      }),
+      "http://localhost:5173/"
+    );
+  });
+
   test("requests read, modify, and send Gmail consent", () => {
     let options;
     const { authorizationUrl, stateCookie } = createGmailAuthorizationRequest({
@@ -94,6 +115,23 @@ describe("Gmail OAuth authorization", () => {
     assert.deepEqual(options.scope, GMAIL_OAUTH_SCOPES);
     assert.ok(options.state);
     assert.ok(stateCookie);
+  });
+
+  test("hints the Gmail consent flow with the authenticated user's email", () => {
+    let options;
+
+    createGmailAuthorizationRequest({
+      userId: 91,
+      loginHint: "SinhaSwitu9670@Gmail.com",
+      oauthClient: {
+        generateAuthUrl(value) {
+          options = value;
+          return "https://accounts.google.com/o/oauth2/v2/auth";
+        },
+      },
+    });
+
+    assert.equal(options.login_hint, "sinhaswitu9670@gmail.com");
   });
 
   test("validates state against both its cookie and authenticated user", () => {
